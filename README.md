@@ -8,7 +8,7 @@ ManualDock is a local Chrome extension with a companion AI-agent Skill. Open a m
 
 ## Install
 
-1. Download and extract the release ZIP, or clone this repository. The current version is **0.2.0**.
+1. Download and extract the release ZIP, or clone this repository. The current version is **0.2.2**.
 2. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the `extension` directory. The extension is named **ManualDock**.
 3. Keep that directory in a stable location. To update an existing installation, replace its files and use Chrome's **Reload** button. Loading a different directory creates a separate extension identity and separate local progress.
 
@@ -18,7 +18,7 @@ The extension interface is currently in Chinese. The companion [Skill](skill/imp
 
 1. Sign in on the device yourself, open its manual, and click the extension's toolbar icon.
 2. Check the detected chapters and article preview. If needed, point-select the contents area, article area, and two different example chapters; validate and save the rule.
-3. Enter the product and version, then click **开始 / 继续导入** (Start / Continue). Keep both the manual and control tabs open.
+3. Enter the product and version, then click **开始 / 继续采集** (Start / Continue). Keep both the manual and control tabs open.
 4. Inspect failed and review items before exporting. A finished queue means all discovered chapters were processed; it does **not** prove the whole manual was discovered.
 
 Each completed chapter is saved locally. Retryable connection, login, and loading interruptions schedule another attempt **three minutes later**. Recovery retains saved chapters and revalidates two sample chapters before continuing. The **暂停** (Pause) button cancels automatic continuation. If a session expires, sign in in the original source tab and return to its manual; ManualDock does not sign in for you. Reopening a control page can restore the saved retry schedule, but a closed control page does not execute retries. A closed source tab or revoked page access requires opening the manual and clicking the extension again.

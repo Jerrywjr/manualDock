@@ -29,6 +29,8 @@
   const MAX_ROWS = 50000, MAX_ITEMS = 5000;
   const space = value => String(value || '').replace(/\s+/g, ' ').trim();
   const pathKey = path => JSON.stringify(path);
+  // A truncated scan must never be shortcut, so the last result is remembered.
+  const scanState = new WeakMap();
   const chapterKey = locator => 'toc:' + encodeURIComponent(JSON.stringify([locator.kind, locator.path, locator.nodeId || '']));
   let activeProfile, cancelPicker;
   function readable(node) {
@@ -163,6 +165,7 @@
     diagnostics.unloadedBranches = unloaded.length;
     diagnostics.pendingBranches = [...root.querySelectorAll('[aria-expanded="false"],details:not([open]) > summary')].filter(el => expandable(el, root)).length + unloaded.length;
     diagnostics.truncated = raw.length > MAX_ROWS || records.length > MAX_ITEMS;
+    scanState.set(doc, { truncated: diagnostics.truncated });
     if (duplicatePaths.size) warnings.push('有重复目录路径，已排除歧义章节，请重新校准');
     if (diagnostics.pendingBranches) warnings.push('仍有未展开或未加载的目录分支，目录可能不完整');
     if (diagnostics.truncated) warnings.push('目录达到扫描上限，结果不完整');
@@ -207,7 +210,7 @@
       const choices = [...doc.querySelectorAll(TOC)].filter(el => !el.closest(EXCLUDED));
       choices.sort((a,b) => b.querySelectorAll(ACTION).length - a.querySelectorAll(ACTION).length);
       const root = choices[0];
-      const body = [...doc.querySelectorAll('main,article,[role="main"],.markdown-body,#content,.content')].find(el => el !== root && !root?.contains(el) && !el.closest(EXCLUDED));
+      const body = [...doc.querySelectorAll('main,article,[role="main"],.markdown-body,#doc-content,#docContent,#document-content,#article-content,#articleContent,.document-content,.article-content,#content,.content')].find(el => el !== root && !root?.contains(el) && !el.closest(EXCLUDED));
       return { root, body };
     };
     let doc = document, regions = findRegions(doc), frameSelector;
@@ -222,10 +225,10 @@
       if (usable.length === 1) ({doc, regions, frameSelector} = usable[0]);
       else if (usable.length > 1) warnings.push('发现多个文档框架，请点选需要的目录和正文');
     }
-    const sangfor = address.pathname === '/adocs.php' && Boolean(doc.querySelector('.x-tree-root-ct'));
+    const sangfor = /^\/(?:adocs|cdocs)\.php$/.test(address.pathname) && Boolean(doc.querySelector('.x-tree-root-ct'));
     if (sangfor) regions.root = doc.querySelector('.x-tree-root-ct');
     const profile = {schemaVersion:1,id:'',revision:1,name:space(doc.title || document.title || '我的手册').slice(0,120),adapterId:sangfor?'sangfor':'generic',
-      entry:address.href,origin:address.origin,pathPrefix:sangfor?'/adocs.php':address.pathname.slice(0,address.pathname.lastIndexOf('/')+1)||'/',
+      entry:address.href,origin:address.origin,pathPrefix:sangfor?address.pathname:address.pathname.slice(0,address.pathname.lastIndexOf('/')+1)||'/',
       hashMode:/^#!?\//.test(address.hash)?'route':address.hash?'anchor':'none',queryKeys:[...new Set(address.searchParams.keys())].filter(key=>!sensitive.test(key)),
       tocSelector:regions.root?selectorFor(regions.root):'',contentSelector:regions.body?selectorFor(regions.body):'',navigation:'links',samples:[]};
     if (frameSelector) profile.frameSelector = frameSelector;
@@ -281,15 +284,36 @@
       target.click();return {clicked:true};
     } catch(error) {return {clicked:false,reason:error.message};}
   }
+  const markerSelected = el => el.getAttribute('aria-selected')==='true' || Boolean(el.getAttribute('aria-current') && el.getAttribute('aria-current')!=='false') || el.matches('.selected,.active,.current,.x-tree-selected,.ix-menu-item-selected');
+
+  // The controller polls this while a chapter loads, so it must not rescan the
+  // whole directory each time. An observed element id is unique in the document;
+  // requiring the recorded path to match keeps the proof as strict as locate().
+  // Anything not provable this way returns null to fall back to a full scan.
+  function quickVerify(profile, chapter) {
+    const locator = chapter?.locator;
+    if (!locator?.nodeId || profile?.frameSelector) return null;
+    const doc = document;
+    if (scanState.get(doc)?.truncated) return null;
+    let root;
+    try { root = unique(doc, profile.tocSelector); } catch { return null; }
+    const target = doc.getElementById(locator.nodeId);
+    if (!target || !root.contains(target)) return null;
+    if (pathKey(observedPath(target, root)) !== pathKey(locator.path)) return null;
+    const row = target.closest('li,[role="treeitem"]') || target;
+    return markerSelected(target) || markerSelected(row);
+  }
+
   function verify({ profile, chapter } = {}) {
     const result = {verified:false,kind:chapter?.locator?.kind||'url',...(chapter?.locator?.path?{path:chapter.locator.path}:{})};
     try {
       context(profile,false);
       if (profile.adapterId==='sangfor' && chapter.locator?.kind==='sangfor-ext-tree') return globalThis.SangforTree?.verify({entry:profile.entry,locator:chapter.locator}) || {...result,reason:'reader-unavailable'};
       if (!chapter.locator) return {...result,verified:Boolean(normalizeURL(chapter.url,profile)&&normalizeURL(location.href,profile)===normalizeURL(chapter.url,profile)),reason:'url-comparison'};
+      const quick = quickVerify(profile, chapter);
+      if (quick !== null) return {...result, verified: quick, reason: quick ? 'selected-directory-marker' : 'selected-directory-mismatch'};
       const {target,row} = locate(profile,chapter);
-      const selected = el => el.getAttribute('aria-selected')==='true' || Boolean(el.getAttribute('aria-current') && el.getAttribute('aria-current')!=='false') || el.matches('.selected,.active,.current,.x-tree-selected,.ix-menu-item-selected');
-      return {...result,verified:selected(target)||selected(row),reason:'selected-directory-marker'};
+      return {...result,verified:markerSelected(target)||markerSelected(row),reason:'selected-directory-marker'};
     } catch(error) {return {...result,reason:error.message};}
   }
   function pick({kind,profile=activeProfile} = {}) {
@@ -332,7 +356,7 @@
         }
         let el;
         if(kind==='toc') {
-          el=target.closest(TOC+',ul,ol');
+          el=profile?.adapterId==='sangfor'?target.closest('.x-tree-root-ct'):target.closest(TOC+',ul,ol');
           // An unfamiliar directory often consists of sibling div tabs. Selecting
           // its label must select the containing directory, not one chapter.
           for(let parent=target,depth=0;!el&&parent&&depth<12;parent=parent.parentElement,depth++) {

@@ -197,3 +197,59 @@ test('lazy branch timeout reports expanded but unloaded branches as incomplete',
   assert.equal(result.items.length,0);assert.equal(expansions,1);assert.equal(result.diagnostics.pendingBranches,1);assert.equal(result.diagnostics.unloadedBranches,1);
   assert.ok(result.warnings.some(x=>/未加载|不完整/.test(x)));assert.ok(Date.now()-started>=5000);assert.ok(Date.now()-started<9000,'loading wait is bounded');
 });
+
+for(const pathname of ['/adocs.php','/cdocs.php'])test('Ext tree detection, discovery and manual sample picking work on '+pathname,async t=>{
+ const url='https://example.test'+pathname+'?index=1&dataID=api-menu-item31';
+ const fixture='<ul class="x-tree-root-ct">'+['31','32'].map((id,i)=>`<li class="x-tree-node"><div class="x-tree-node-el" ext:tree-node-id="api-menu-item${id}"><span>Chapter ${i+1}</span></div><ul class="x-tree-node-ct"></ul></li>`).join('')+'</ul><div id="articleContent">Command help</div>';
+ const {api,w,doc}=setup(t,fixture,url);w.eval(await fs.readFile(new URL('../extension/tree.js',import.meta.url),'utf8'));
+ const {profile}=api.detect({entry:url});assert.equal(profile.adapterId,'sangfor');assert.equal(profile.pathPrefix,pathname);
+ const result=await api.discover({profile});assert.equal(result.items.length,2);assert.equal(result.items[0].locator.nodeId,'api-menu-item31');
+ let clicks=0;doc.addEventListener('click',()=>clicks++);const picking=api.pick({kind:'sample',profile});doc.querySelector('.x-tree-node-el span').dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));
+ const sample=await picking;assert.equal(sample.title,'Chapter 1');assert.equal(sample.locator.nodeId,'api-menu-item31');assert.equal(clicks,0);
+ assert.equal(w.SangforTree.scan({entry:'https://example.test'+(pathname==='/adocs.php'?'/cdocs.php':'/adocs.php')}).items.length,0,'API and CLI scopes must not be mixed');
+});
+test('manual TOC calibration from a nested CLI label selects the full supported tree',async t=>{
+ const url='https://example.test/cdocs.php?index=1&dataID=api-menu-item31';
+ const {api,w,doc}=setup(t,'<ul id="tocRoot" class="x-tree-root-ct"><li class="x-tree-node"><div class="x-tree-node-el"><span>Commands</span></div><ul id="nested" class="x-tree-node-ct"><li class="x-tree-node"><div class="x-tree-node-el" ext:tree-node-id="api-menu-item31"><span id="leaf">show interface</span></div><ul class="x-tree-node-ct"></ul></li></ul></li></ul><main>Command help</main>',url);
+ w.eval(await fs.readFile(new URL('../extension/tree.js',import.meta.url),'utf8'));const {profile}=api.detect({entry:url});
+ const picking=api.pick({kind:'toc',profile});doc.querySelector('#leaf').dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));const selected=await picking;
+ assert.equal(selected.selector,'#tocRoot','calibration must retain the parents needed to resolve full chapter paths');
+ const calibrated={...profile,tocSelector:selected.selector};const sampling=api.pick({kind:'sample',profile:calibrated});doc.querySelector('#leaf').dispatchEvent(new w.MouseEvent('click',{bubbles:true,cancelable:true}));const sample=await sampling;
+ assert.deepEqual(plain(sample.locator.path),['Commands','show interface']);
+});
+test('chapter verification stays cheaper than one directory scan on a large CLI tree',async t=>{
+ const url='https://example.test/cdocs.php?index=1&dataID=api-menu-item31';
+ let fixture='<ul class="x-tree-root-ct"><li class="x-tree-node"><div class="x-tree-node-el"><span>Commands</span></div><ul class="x-tree-node-ct">';
+ for(let i=0;i<1200;i++)fixture+=`<li class="x-tree-node"><div class="x-tree-node-el x-tree-node-leaf${i===0?' x-tree-selected':''}" ext:tree-node-id="api-menu-item${31+i}"><span>Chapter ${i+1}</span></div><ul class="x-tree-node-ct"></ul></li>`;
+ fixture+='</ul></li></ul><div id="articleContent">Command help</div>';
+ const {api,w}=setup(t,fixture,url);w.eval(await fs.readFile(new URL('../extension/tree.js',import.meta.url),'utf8'));
+ const {profile}=api.detect({entry:url});assert.equal(profile.adapterId,'sangfor');
+ const scanStart=performance.now();const items=w.SangforTree.scan({entry:url}).items;const scanMs=performance.now()-scanStart;
+ assert.equal(items.length,1200);
+ assert.equal(api.verify({profile,chapter:items[0]}).verified,true,'the selected chapter must be proven');
+ assert.equal(api.verify({profile,chapter:items[1]}).verified,false,'an unselected chapter must never be reported as proven');
+ const started=performance.now();for(let i=0;i<30;i++)api.verify({profile,chapter:items[0]});const per=(performance.now()-started)/30;
+ assert.ok(per<scanMs,`verifying (${per.toFixed(1)}ms each) must stay cheaper than one full directory scan (${scanMs.toFixed(1)}ms)`);
+});
+test('verification never trusts an ambiguous node id and reports the unselected chapter',async t=>{
+ const url='https://example.test/cdocs.php?index=1&dataID=api-menu-item31';
+ const row='<li class="x-tree-node"><div class="x-tree-node-el x-tree-node-leaf" ext:tree-node-id="api-menu-item31"><span>Chapter 1</span></div><ul class="x-tree-node-ct"></ul></li>';
+ // Two rows share the observed id, so nothing may be proven without a full scan.
+ const {api,w}=setup(t,`<ul class="x-tree-root-ct">${row}${row}</ul><div id="articleContent">Command help</div>`,url);
+ w.eval(await fs.readFile(new URL('../extension/tree.js',import.meta.url),'utf8'));
+ const {profile}=api.detect({entry:url});
+ const result=api.verify({profile,chapter:{url,title:'Chapter 1',locator:{kind:'sangfor-ext-tree',path:['Chapter 1'],nodeId:'api-menu-item31'}}});
+ assert.equal(result.verified,false);
+ assert.ok(result.reason&&result.reason!=='selected-path-matches',`ambiguity must not be answered from the short path: ${result.reason}`);
+});
+test('generic verification proves the recorded path and stays local to the directory',t=>{
+ const {api,doc}=setup(t,'<ul id="toc"><li><a id="one" href="#" class="selected">One</a></li><li><a id="two" href="#">Two</a></li></ul><main><h1>One</h1></main>');
+ const profile={...base,entry:'https://example.test/docs/start.html',pathPrefix:'/docs/',tocSelector:'#toc',contentSelector:'main',navigation:'click'};
+ assert.equal(api.verify({profile,chapter:{url:profile.entry,title:'One',locator:{kind:'generic-toc',path:['One'],nodeId:'one'}}}).verified,true);
+ assert.equal(api.verify({profile,chapter:{url:profile.entry,title:'Two',locator:{kind:'generic-toc',path:['Two'],nodeId:'two'}}}).verified,false);
+ // A node id that exists but belongs to another path must not be accepted.
+ assert.equal(api.verify({profile,chapter:{url:profile.entry,title:'One',locator:{kind:'generic-toc',path:['Two'],nodeId:'one'}}}).verified,false);
+ doc.querySelector('#two').classList.add('selected');doc.querySelector('#one').classList.remove('selected');
+ assert.equal(api.verify({profile,chapter:{url:profile.entry,title:'Two',locator:{kind:'generic-toc',path:['Two'],nodeId:'two'}}}).verified,true);
+ assert.equal(api.verify({profile,chapter:{url:profile.entry,title:'One',locator:{kind:'generic-toc',path:['One'],nodeId:'one'}}}).verified,false);
+});

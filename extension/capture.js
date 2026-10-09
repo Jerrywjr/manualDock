@@ -136,11 +136,17 @@
     let timeout;
     const observers = new Map();
     const observe = target => {
-      if (observers.has(target) || !target.documentElement) return;
+      if (!target.documentElement) return;
+      let root = target.documentElement;
+      if (activeProfile && !options.scanOnly) {
+        try { root = selectRoot(target, target === doc ? options.selector : undefined).root || root; } catch { /* Invalid selectors are reported after waiting. */ }
+      }
+      if (observers.has(root)) return;
+      lastChange = Date.now();
       const view = target.defaultView || globalThis;
       const observer = new view.MutationObserver(() => { lastChange = Date.now(); });
-      observer.observe(target.documentElement, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'data-src', 'hidden', 'aria-hidden', 'style', ...(activeProfile ? ['class', 'alt'] : [])] });
-      observers.set(target, observer);
+      observer.observe(root, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['src', 'data-src', 'hidden', 'aria-hidden', 'style', ...(activeProfile ? ['class', 'alt'] : [])] });
+      observers.set(root, observer);
     };
     const hasContent = (target, seen = new Set(), depth = 0) => {
       if (seen.has(target) || depth > 5) return false;
@@ -229,7 +235,7 @@
         if (handler) {
           // Read only literal URL arguments. No eval, handler invocation, identifier
           // expansion, API calls, or script-element inspection is performed.
-          const literals = [...handler.matchAll(/(['"])([^'"\r\n]*adocs\.php(?:\?[^'"\r\n]*)?)\1/gi)].map(match => match[2]);
+          const literals = [...handler.matchAll(/(['"])([^'"\r\n]*(?:adocs|cdocs)\.php(?:\?[^'"\r\n]*)?)\1/gi)].map(match => match[2]);
           raws.push(...literals);
           if (!literals.some(raw => manualURL(raw, entry, base))) diagnostics.unmappedHandlers += 1;
         }
@@ -353,7 +359,7 @@
       return summary;
     };
     const diagnosticText = (raw, base, limit = limits.text) => cleanSpace(String(raw || '').slice(0, 2048).replace(
-      /https?:\/\/[^\s<>"'`]+|(?:\.{0,2}\/)?(?:[A-Za-z0-9_-]+\/)*adocs\.php\?[^\s<>"'`]+/gi,
+      /https?:\/\/[^\s<>"'`]+|(?:\.{0,2}\/)?(?:[A-Za-z0-9_-]+\/)*(?:adocs|cdocs)\.php\?[^\s<>"'`]+/gi,
       rawURL => {
         const accepted = manualURL(rawURL, entry, base);
         if (accepted) return accepted;
@@ -615,44 +621,61 @@
     let requests = 0;
     let embedded = 0;
     const cache = new Map();
-    for (let index = 0; index < images.length; index += 1) {
-      const { element, raw, base } = images[index];
-      let timeout;
-      const controller = new AbortController();
+    const DATA_RE = /^data:(image\/(?:png|jpeg|gif|webp|svg\+xml|bmp|x-icon|vnd\.microsoft\.icon));base64,([a-zA-Z0-9+/=\s]+)$/i;
+    // Phase 1 — resolve every image independently and concurrently. Each unique
+    // URL is fetched once and shared across duplicates; data: URLs decode without
+    // any network or timer. The per-image 4s timeout bounds the slowest transfer,
+    // so the page's total image time drops from the sum of fetches to the longest
+    // single fetch instead of blocking one image behind another.
+    const pending = images.map(async (item, index) => {
+      const { element, raw, base } = item;
+      if (index >= MAX_IMAGES) return { index, skip: 'over-limit' };
+      if (/^data:/i.test(raw)) {
+        try {
+          const match = raw.match(DATA_RE);
+          if (!match || match[2].length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 10) throw new Error('unsupported-data');
+          const binary = atob(match[2]);
+          return { index, result: { type: match[1].toLowerCase(), bytes: Uint8Array.from(binary, char => char.charCodeAt(0)) } };
+        } catch { return { index, error: 'unsupported-data' }; }
+      }
+      try {
+        const url = new URL(raw, base);
+        if (!raw || !['http:', 'https:'].includes(url.protocol) || url.origin !== new URL(entry).origin || url.username || url.password) return { index, skip: 'off-origin' };
+        if (!/\.(?:png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(url.pathname)) return { index, skip: 'dynamic' };
+        url.hash = '';
+        if (!cache.has(url.href)) {
+          requests += 1;
+          const controller = new AbortController();
+          const duration = Math.min(MAX_IMAGE_TIME, MAX_TOTAL_IMAGE_TIME - (Date.now() - start));
+          const work = fetch(url.href, { method: 'GET', credentials: 'same-origin', redirect: 'error', signal: controller.signal, referrerPolicy: 'no-referrer' }).then(response => readImage(response, controller.signal));
+          cache.set(url.href, new Promise((resolve, reject) => {
+            const timer = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, duration);
+            work.then(value => { clearTimeout(timer); resolve(value); }, error => { clearTimeout(timer); reject(error); });
+          }));
+        }
+        return { index, result: await cache.get(url.href) };
+      } catch (error) {
+        return { index, error: error?.message || 'fetch-failed' };
+      }
+    });
+    const outcomes = await Promise.all(pending);
+    // Phase 2 — embed sequentially, exactly mirroring the prior per-image checks
+    // (size budget, SVG sanitize, raster validation) so the saved output is
+    // identical for every image that was reachable.
+    for (const outcome of outcomes) {
+      const { element } = images[outcome.index];
       const missing = reason => {
         const note = document.createElement('span');
         note.textContent = `[图片未保存${element.getAttribute('alt') ? `：${element.getAttribute('alt')}` : ''}]`;
         element.replaceWith(note);
-        warnings.push(`图片 ${index + 1} 未保存：${reason}。`);
+        warnings.push(`图片 ${outcome.index + 1} 未保存：${reason}。`);
       };
       try {
-        if (index >= MAX_IMAGES) { missing('超过每页 40 张上限'); continue; }
-        if (Date.now() - start >= MAX_TOTAL_IMAGE_TIME || total >= MAX_TOTAL_IMAGE_BYTES) { missing('超过单页图片时间或总大小上限'); continue; }
-        let result;
-        if (/^data:/i.test(raw)) {
-          const match = raw.match(/^data:(image\/(?:png|jpeg|gif|webp|svg\+xml|bmp|x-icon|vnd\.microsoft\.icon));base64,([a-zA-Z0-9+/=\s]+)$/i);
-          if (!match || match[2].length > Math.ceil(MAX_IMAGE_BYTES * 4 / 3) + 10) throw new Error('unsupported-data');
-          const binary = atob(match[2]);
-          result = { type: match[1].toLowerCase(), bytes: Uint8Array.from(binary, char => char.charCodeAt(0)) };
-        } else {
-          const url = new URL(raw, base);
-          if (!raw || !['http:', 'https:'].includes(url.protocol) || url.origin !== new URL(entry).origin || url.username || url.password) { missing('图片不在同源范围内或地址无效'); continue; }
-          if (!/\.(?:png|jpe?g|gif|webp|svg|bmp|ico)$/i.test(url.pathname)) { missing('只请求静态图片扩展名，动态地址需人工核对'); continue; }
-          url.hash = '';
-          if (cache.has(url.href)) {
-            result = cache.get(url.href);
-          } else {
-            requests += 1;
-            const duration = Math.min(MAX_IMAGE_TIME, MAX_TOTAL_IMAGE_TIME - (Date.now() - start));
-            const work = (async () => {
-              const response = await fetch(url.href, { method: 'GET', credentials: 'same-origin', redirect: 'error', signal: controller.signal, referrerPolicy: 'no-referrer' });
-              return readImage(response, controller.signal);
-            })();
-            const deadline = new Promise((_, reject) => { timeout = setTimeout(() => { controller.abort(); reject(new Error('timeout')); }, duration); });
-            result = await Promise.race([work, deadline]);
-            cache.set(url.href, result);
-          }
-        }
+        if (outcome.skip === 'over-limit') { missing('超过每页 40 张上限'); continue; }
+        if (outcome.skip === 'off-origin') { missing('图片不在同源范围内或地址无效'); continue; }
+        if (outcome.skip === 'dynamic') { missing('只请求静态图片扩展名，动态地址需人工核对'); continue; }
+        if (outcome.error) { missing('下载失败、超时、重定向、过大或格式不受支持'); continue; }
+        const result = outcome.result;
         if (result.bytes.byteLength > MAX_IMAGE_BYTES || total + result.bytes.byteLength > MAX_TOTAL_IMAGE_BYTES) { missing('超过图片大小上限'); continue; }
         let bytes = result.bytes;
         if (result.type === 'image/svg+xml') bytes = sanitizeSVG(bytes);
@@ -663,9 +686,6 @@
         embedded += 1;
       } catch {
         missing('下载失败、超时、重定向、过大或格式不受支持');
-      } finally {
-        clearTimeout(timeout);
-        controller.abort();
       }
     }
     diagnostics.images = { found: images.length, embedded, missing: images.length - embedded, requests, bytes: total };
@@ -778,6 +798,7 @@
   }
 
   async function capture(options = {}) {
+    const captureStarted = Date.now();
     activeProfile = options.profile || null;
     const document = activeProfile?.frameSelector ? globalThis.document.querySelector(activeProfile.frameSelector)?.contentDocument : globalThis.document;
     const entry = options.entry || location.href;
@@ -853,7 +874,9 @@
       for (const frame of activeProfile ? [] : document.querySelectorAll('iframe,frame')) {
         if (!selected.root.contains(frame) && frameDocs.has(frame)) container.append(buildHTML(frame, context, new Set([document])));
       }
+      const imageStarted = Date.now();
       await embedImages(context.images, entry, warnings, diagnostics);
+      diagnostics.timing = { imagesMs: Date.now() - imageStarted };
       result.title = cleanSpace(plainText(container.querySelector('h1,h2,h3')) || document.title).slice(0, 300) || '未命名章节';
       result.text = plainText(container).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
       result.markdown = markdown(container);
@@ -872,6 +895,8 @@
       diagnostics.reason = 'capture-failed';
       warnings.push('页面提取发生错误；未记录页面脚本或敏感字段，请人工检查页面结构。');
       return result;
+    } finally {
+      diagnostics.timing = { ...diagnostics.timing, domWaitMs: diagnostics.waitedMs || 0, extractionTotalMs: Date.now() - captureStarted };
     }
   }
 

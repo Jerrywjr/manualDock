@@ -233,6 +233,22 @@ test('times out stalled image requests and completes with explicit missing-image
 });
 
 
+test('fetches multiple images concurrently instead of one after another', { timeout: 9000 }, async () => {
+  const dom = page('<main><h1>Concurrent images</h1><img src="/a.png"><img src="/b.png"><img src="/c.png"></main>');
+  let active = 0;
+  let maxActive = 0;
+  dom.window.fetch = async () => {
+    active += 1;
+    maxActive = Math.max(maxActive, active);
+    await new Promise(resolve => setTimeout(resolve, 50));
+    active -= 1;
+    return new Response(new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]), { headers: { 'Content-Type': 'image/png' } });
+  };
+  const result = await capture(dom);
+  assert.equal(result.diagnostics.images.embedded, 3);
+  assert.ok(maxActive >= 3, 'all images should be fetched at the same time, not serially');
+});
+
 test('normalizes only complete index/dataID pairs and strips leading zeroes consistently with the exporter', async () => {
   const dom = page(`<main><h1>Directory</h1>
     <a href="?index=001&dataID=part_A-9#section">Valid</a>
@@ -555,4 +571,14 @@ test('real login forms and visible session-expiry layers still pause even while 
     assert.equal(result.text,'');
     assert.doesNotMatch(JSON.stringify(result),/AUTH_SECRET/);
   }
+});
+
+test('navigation-only mutations do not stall a calibrated article extraction',async()=>{
+ const dom=page('<nav id="toc"><span id="ticker">0</span></nav><main><h1>Stable chapter</h1><p>Body</p></main>');
+ dom.window.eval(await readFile(new URL('../extension/manual-adapters.js',import.meta.url),'utf8'));
+ const profile={entry:CURRENT,origin:'https://manual.test',pathPrefix:'/adocs.php',queryKeys:['index','dataID'],hashMode:'none',tocSelector:'#toc',contentSelector:'main',adapterId:'generic'};
+ let tick=0;dom.window.setInterval(()=>{dom.window.document.querySelector('#ticker').textContent=String(++tick);},100);
+ const result=await capture(dom,{profile,selector:'main'});
+ assert.equal(result.status,'ok');assert.match(result.text,/Stable chapter/);assert.equal(result.diagnostics.settled,true);
+ assert.ok(result.diagnostics.waitedMs<4000,'unrelated navigation activity must not consume the 8-second stability timeout');
 });

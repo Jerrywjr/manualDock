@@ -16,3 +16,11 @@ export function saveProfile(profile){return transaction(['profiles'],'readwrite'
 export function loadProfiles(){return transaction(['profiles'],'readonly',t=>{const r=t.objectStore('profiles').getAll();return()=>r.result;});}
 export function setSetting(key,value){return transaction(['settings'],'readwrite',t=>t.objectStore('settings').put(value,key));}
 export function getSetting(key){return transaction(['settings'],'readonly',t=>{const r=t.objectStore('settings').get(key);return()=>r.result;});}
+export function listSettings(){return transaction(['settings'],'readonly',t=>{const r=t.objectStore('settings').getAllKeys();return()=>r.result;});}
+export function deleteSetting(key){return transaction(['settings'],'readwrite',t=>t.objectStore('settings').delete(key));}
+/** Removes a task and every page saved under it. Saved recognition rules stay. */
+export function deleteTask(taskId){return transaction(['tasks','pages'],'readwrite',t=>{
+ t.objectStore('tasks').delete(taskId);
+ const cursor=t.objectStore('pages').openKeyCursor(IDBKeyRange.bound([taskId,''],[taskId,'\uffff']));
+ cursor.onsuccess=event=>{const c=event.target.result;if(!c)return;t.objectStore('pages').delete(c.primaryKey);c.continue();};
+});}

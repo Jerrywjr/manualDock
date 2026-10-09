@@ -7,15 +7,16 @@ const seed=()=>profiles.validateProfile({schemaVersion:1,id:'profile',revision:1
 async function setup(t,{holdTab=false,savedProfiles=[],savedTasks=[],currentURL=null,savedSettings=[]}={}){
  const dom=new JSDOM(html,{url:'https://extension.test/panel.html?tab=1',runScripts:'outside-only'}),w=dom.window;t.after(()=>w.close());
  const settings=new Map(savedSettings);let releaseTab;const gate=new Promise(r=>releaseTab=r),disk=new Map(savedTasks.map(task=>[task.taskId,structuredClone(task)])),held=new Set();
- const state={captured:[],verified:[],rotation:{running:false,count:0,message:'未开始'},profile:currentURL?{...seed(),id:'detected-profile',entry:currentURL}:seed(),detected:0,picked:null,previewPage:{status:'ok',text:'preview'},verificationPreviews:null};
+ const state={captured:[],verified:[],rotation:{running:false,count:0,message:'未开始'},profile:currentURL?{...seed(),id:'detected-profile',entry:currentURL}:seed(),detected:0,picked:null,previewPage:{status:'ok',text:'preview'},verificationPreviews:null,detectionWarnings:[],discoveryWarnings:[],discoveredChapters:null};
  const chapters=['A','C'].map(title=>({key:'url:https://manual.test/docs/'+title,url:'https://manual.test/docs/'+title,title}));
  const clone=v=>structuredClone(v);
- const io={recover:async()=>{state.recovered=(state.recovered||0)+1;},tab:async()=>{if(holdTab)await gate;return{id:1,url:state.profile.entry,status:'complete'};},install:async()=>{if(state.installGate)await state.installGate;},detect:async()=>{state.detected++;return{profile:clone(state.profile),warnings:[]};},discover:async()=>({items:clone(chapters),warnings:[],diagnostics:{}}),pick:async()=>state.picked,
+ const io={recover:async()=>{state.recovered=(state.recovered||0)+1;},tab:async()=>{if(holdTab)await gate;return{id:1,url:state.profile.entry,status:'complete'};},install:async()=>{if(state.installGate)await state.installGate;},detect:async()=>{state.detected++;return{profile:clone(state.profile),warnings:clone(state.detectionWarnings)};},discover:async()=>({items:clone(state.discoveredChapters??chapters),warnings:clone(state.discoveryWarnings),diagnostics:{}}),pick:async()=>state.picked,
   capture:async(c,p)=>{if(state.captureError)throw new Error(state.captureError);state.captured.push(clone(p));return{status:'ok',url:c.url,text:'body '+c.title,navigationProof:{verified:true},warnings:[],diagnostics:{}};},
   verifySamples:async p=>{if(state.verifyError)throw new Error(state.verifyError);state.verified.push(clone(p));return{verified:true,previews:state.verificationPreviews||p.samples.map(c=>({title:c.title,text:'body '+c.title}))};}};
  function serializable(value){if(value===undefined)throw new Error('Value is unserializable');if(value&&typeof value==='object')Object.values(value).forEach(serializable);}
  Object.assign(w,profiles,recovery,{AutoRetryClock,createTask,ImportEngine,buildExports,contentHash,parseSpecification,createBrowserIO:()=>io,Blob,
   loadProfiles:async()=>clone(savedProfiles),saveProfile:async p=>{state.savedProfile=clone(p);},loadTask:async id=>disk.has(id)?clone(disk.get(id)):null,listTasks:async()=>[...disk.values()],saveTask:async task=>disk.set(task.taskId,clone(task)),saveWholeTask:async task=>disk.set(task.taskId,clone(task)),setSetting:async(key,value)=>settings.set(key,clone(value)),getSetting:async key=>settings.get(key)||null,
+  listSettings:async()=>[...settings.keys()],deleteSetting:async key=>{settings.delete(key);},deleteTask:async id=>{disk.delete(id);},
   chrome:{tabs:{getCurrent:async()=>({id:2}),update:async()=>{}},scripting:{executeScript:async options=>{
    if(options.files)return[];if(options.args)serializable(options.args);
    if(typeof options.args?.[0]==='string'){
@@ -27,12 +28,96 @@ async function setup(t,{holdTab=false,savedProfiles=[],savedTasks=[],currentURL=
   }}}});
  w.navigator.locks={request:async(name,_options,callback)=>{if(held.has(name))return callback(null);held.add(name);try{return await callback({name});}finally{held.delete(name);}}};
  w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=()=>{};w.setInterval=()=>0;
- w.eval(source+'\n;globalThis.TestPanel={render,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
+ w.eval(source+'\n;globalThis.TestPanel={render,detect,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
  return{w,document:w.document,state,disk,held,api:w.TestPanel,releaseTab,settle:async()=>{for(let i=0;i<15;i++)await flush();}};
 }
 test('panel web actions remain gated until initialization finishes',async t=>{
  const p=await setup(t,{holdTab:true});assert.equal(p.document.getElementById('start').disabled,true);assert.equal(p.document.getElementById('spec-file').disabled,false);
  p.releaseTab();await p.settle();assert.equal(p.document.getElementById('start').disabled,false);
+});
+test('a missing article selector exposes calibration while retaining verified default extraction',async t=>{
+ const p=await setup(t);await p.settle();p.state.profile.contentSelector='';p.state.detectionWarnings=['未自动识别正文，请点选正文区域'];await p.api.detect();
+ assert.equal(p.document.getElementById('start').disabled,false);
+ assert.equal(p.document.getElementById('pick-content').disabled,false);
+ assert.equal(p.document.getElementById('calibration')?.open,true);
+ assert.match(p.document.getElementById('recognition-message')?.textContent||'',/正文/);
+ await p.api.run();assert.equal(p.state.verified.length,1);assert.equal(p.state.captured.length,2);
+});
+test('an empty chapter discovery provides its warning and a calibration action instead of an enabled start',async t=>{
+ const p=await setup(t);await p.settle();p.state.discoveredChapters=[];p.state.discoveryWarnings=['目录路径重复，已排除歧义章节'];p.document.getElementById('detect').click();await p.settle();
+ assert.equal(p.document.getElementById('start').disabled,true);
+ assert.equal(p.document.getElementById('pick-toc').disabled,false);
+ const message=p.document.getElementById('recognition-message')?.textContent||'';
+ assert.match(message,/章节|目录/);assert.match(message,/路径重复/);
+});
+test('detection warnings remain visible after the task renders and a later clean detection clears them',async t=>{
+ const p=await setup(t);await p.settle();p.state.detectionWarnings=['跨域框架不可访问'];await p.api.detect();p.api.render();
+ assert.match(p.document.getElementById('recognition-message')?.textContent||'',/跨域框架/);
+ p.state.detectionWarnings=[];await p.api.detect();
+ assert.doesNotMatch(p.document.getElementById('recognition-message')?.textContent||'',/跨域框架/);
+});
+test('switching document modes marks the current entry accessibly and keeps the matching controls visible',async t=>{
+ const p=await setup(t);await p.settle();const web=p.document.querySelector('[data-mode="web"]'),spec=p.document.querySelector('[data-mode="spec"]');
+ assert.equal(web.getAttribute('aria-current'),'page');spec.click();
+ assert.equal(spec.getAttribute('aria-current'),'page');assert.equal(web.hasAttribute('aria-current'),false);
+ assert.equal(p.document.querySelector('[data-panel="web"]').hidden,true);
+ assert.equal(p.document.querySelector('[data-panel="spec"]').hidden,false);
+ assert.equal(p.document.getElementById('spec-file').disabled,false);
+});
+test('returning from a single-interface specification restores the identified web task',async t=>{
+ const p=await setup(t);await p.settle();await p.api.run();const webId=p.api.getTask().taskId;
+ p.document.querySelector('[data-mode="spec"]').click();
+ await p.api.importSpec(JSON.stringify({openapi:'3.0.3',info:{title:'API',version:'1'},paths:{'/one':{get:{responses:{'200':{description:'OK'}}}}}}),'api.json');
+ assert.equal(p.api.getTask().sourceKind,'openapi');
+ p.document.querySelector('[data-mode="web"]').click();
+ assert.equal(p.api.getTask().taskId,webId);assert.equal(p.document.getElementById('start').disabled,false);
+ assert.equal(p.document.getElementById('start').textContent,'继续采集');
+});
+test('opening a saved specification from the library preserves the current web task',async t=>{
+ const spec={taskId:'saved-spec',sourceKind:'openapi',product:'API',version:'1',entry:'local.json',queue:[{key:'one',title:'GET /one',status:'captured'}],pages:{one:{text:'API body'}},status:'finished'};
+ const p=await setup(t,{savedTasks:[spec]});await p.settle();const webId=p.api.getTask().taskId;
+ p.document.querySelector('[data-mode="library"]').click();await p.settle();
+ const specEntry=[...p.document.querySelectorAll('#task-list .task-open')].find(button=>button.textContent.includes('API'));
+ assert.ok(specEntry,'the saved specification must be listed');specEntry.click();await p.settle();
+ assert.equal(p.api.getTask().taskId,spec.taskId);p.document.querySelector('[data-mode="web"]').click();
+ assert.equal(p.api.getTask().taskId,webId);assert.equal(p.document.getElementById('start').disabled,false);
+});
+test('the library lists source, progress and update time, and deletes a task after confirmation',async t=>{
+ const saved={taskId:'saved-web',sourceKind:'web',product:'OldManual',version:'2.1',entry:'https://manual.test/docs/index',profile:seed(),
+  queue:[{key:'a',title:'A',status:'captured'},{key:'b',title:'B',status:'failed'}],pages:{},status:'finished',
+  createdAt:'2026-01-01T00:00:00.000Z',updatedAt:new Date(Date.now()-3600000).toISOString()};
+ const p=await setup(t,{savedTasks:[saved]});await p.settle();
+ p.document.querySelector('[data-mode="library"]').click();await p.settle();
+ const item=[...p.document.querySelectorAll('#task-list .task-item')].find(row=>row.textContent.includes('OldManual'));
+ assert.ok(item,'the saved task must be listed');const text=item.textContent;
+ assert.match(text,/OldManual/);assert.match(text,/2\.1/);
+ assert.match(text,/已保存 1\/2 章/,'progress must be shown');
+ assert.match(text,/docs\/index/,'the source entry must be shown');
+ assert.match(text,/更新/,'an update time must be shown');
+ assert.match(text,/创建/,'a creation time must be shown');
+ assert.equal(item.querySelector('.task-open').disabled,false);
+ p.w.confirm=()=>false;item.querySelector('.danger').click();await p.settle();
+ assert.equal(p.disk.has('saved-web'),true,'a declined confirmation must not delete anything');
+ p.w.confirm=()=>true;item.querySelector('.danger').click();await p.settle();
+ assert.equal(p.disk.has('saved-web'),false,'confirming must delete the task');
+ assert.doesNotMatch(p.document.querySelector('#task-list').textContent,/OldManual/,'the deleted task must disappear from the list');
+});
+test('returning to the web task restores a retry timer that expired while viewing a specification',async t=>{
+ const p=await setup(t);await p.settle();let callback,timerNumber=0;const clock=p.api.retryClock;
+ clock.setTimer=fn=>{callback=fn;return ++timerNumber;};clock.clearTimer=()=>{};
+ p.state.verifyError='Failed to fetch';await p.api.run();const original=p.api.getTask().taskId;
+ p.document.querySelector('[data-mode="spec"]').click();
+ await p.api.importSpec(JSON.stringify({openapi:'3.0.3',info:{title:'API',version:'1'},paths:{}}),'empty.json');
+ await callback();assert.equal(clock.timer,null);p.state.verifyError=null;
+ p.document.querySelector('[data-mode="web"]').click();assert.equal(p.api.getTask().taskId,original);assert.notEqual(clock.timer,null);
+ await callback();await p.settle();assert.equal(p.state.captured.length,2);clock.dispose();
+});
+test('two selected samples allow collection after custom calibration before a directory rescan',async t=>{
+ const p=await setup(t);await p.settle();p.state.discoveredChapters=[];
+ p.state.picked={selector:'#custom-toc'};p.document.getElementById('pick-toc').click();await p.settle();
+ p.state.picked={url:'https://manual.test/docs/A',title:'A'};await p.api.sample(0);
+ p.state.picked={url:'https://manual.test/docs/C',title:'C'};await p.api.sample(1);await p.api.verifyAndSave();p.api.render();
+ assert.equal(p.document.getElementById('start').disabled,false);
 });
 test('edited selectors verify and capture in a new task without replacing earlier pages',async t=>{
  const p=await setup(t);await p.settle();const oldId=p.api.getTask().taskId;
@@ -141,4 +226,12 @@ test('reopening an interrupted running task persists its new retry deadline befo
  const p=await setup(t,{savedTasks:[saved],savedSettings:[['recovery-tab:1',saved.taskId]],currentURL:profile.entry});await p.settle();
  const deadline=p.api.getTask().autoRecovery.nextAttemptAt;assert.ok(deadline>Date.now());assert.equal(p.disk.get(saved.taskId).autoRecovery.nextAttemptAt,deadline);
  await p.api.retryAutomatically(saved.taskId);assert.equal(p.state.recovered,1);assert.equal(p.api.getTask().queue.filter(c=>c.status==='captured').length,2);assert.equal(p.api.getTask().autoRecovery.enabled,false);
+});
+
+test('a successful navigation trial remains valid when only the click interval changes',async t=>{
+ const p=await setup(t);await p.settle();p.api.setRotation({origin:'https://manual.test',pathPrefix:'/docs',intervalMs:60000,targets:[{selector:'#a',title:'A'}]});
+ const trial=p.api.rotationAction(p.api.rotationTrial);await p.settle();p.state.rotation.count=1;await trial;
+ assert.equal(p.api.getRotationVerified(),true);p.document.getElementById('rotation-interval').value='120';p.document.getElementById('rotation-interval').dispatchEvent(new p.w.Event('change'));
+ p.document.getElementById('rotation-start').click();await p.settle();assert.equal(p.document.getElementById('error').textContent,'');assert.equal(p.state.rotation.running,true);
+ p.document.querySelector('#rotation-targets button').click();await p.settle();assert.equal(p.api.getRotationVerified(),false,'removing a target still requires a new trial');
 });

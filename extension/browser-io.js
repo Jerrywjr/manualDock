@@ -53,6 +53,7 @@ export function createBrowserIO(tabId){
   }
   async function pick(kind,profile){await install();return adapter('pick',{kind,profile});}
   async function capture(chapter,profile){
+    const captureStarted=Date.now();
     let current=await tab();if(!current.url||new URL(current.url).origin!==profile.origin)throw new Error('原标签页已离开手册网站');
     if(loginURL(current.url))return {status:'auth'};await install();const before=await state(profile,chapter);
     if(before?.body.auth)return {status:'auth'};
@@ -65,7 +66,7 @@ export function createBrowserIO(tabId){
         frame.contentWindow.location.assign(target);return {navigated:true};
       }});}else await chrome.tabs.update(tabId,{url:target});
     }
-    const start=Date.now(),deadline=start+45000;let signature='',stableSince=0,installed=false;
+    const start=Date.now(),deadline=start+45000;let signature='',stableSince=0,installed=false,lastBlockers=[];
     await delay(180);
     while(Date.now()<deadline){
       current=await tab();if(/^chrome-error:\/\//i.test(current.url||''))throw recoveryError('手册页面处于网络错误状态','NETWORK_ERROR');if(!current.url||new URL(current.url).origin!==profile.origin)throw new Error('页面跳转到其他来源，已停止');
@@ -79,18 +80,24 @@ export function createBrowserIO(tabId){
       if(observed?.body.auth)return {status:'auth'};
       const changed=observed?.body.signature!==before?.body.signature;
       const newDocument=Boolean(before?.documentId&&observed?.documentId&&before.documentId!==observed.documentId);
-      const ready=observed?.proof?.verified&&observed.body.nonEmpty&&!observed.body.loading&&(newDocument||before?.proof?.verified||changed);
+      const switched=newDocument||before?.proof?.verified||changed;
+      const blockers=[!observed?.proof?.verified&&'目录选中未确认',!observed.body.nonEmpty&&'正文为空',observed.body.loading&&'仍在加载',!switched&&'正文未变化'].filter(Boolean);
+      lastBlockers=blockers;
+      const ready=observed?.proof?.verified&&observed.body.nonEmpty&&!observed.body.loading&&switched;
       if(!ready){signature='';stableSince=0;await delay(160);continue;}
       if(signature!==observed.body.signature){signature=observed.body.signature;stableSince=Date.now();}
       if(Date.now()-stableSince>=600&&Date.now()-start>=1200){
+        const navigationFinished=Date.now();
         const r=await chrome.scripting.executeScript({target:{tabId},args:[{entry:profile.entry,profile,selector:profile.contentSelector,chapter,...(chapter.locator?{locator:chapter.locator}:{}),expectedURL:current.url,chapterTitle:chapter.title}],func:options=>globalThis.ManualCapture.capture(options)});
         const result=r[0]?.result;if(!result)throw new Error('页面未返回正文');
         if(result.status==='ok'){const final=await state(profile,chapter);if(!final?.proof?.verified)throw new Error('正文读取后目录选中状态已变化');if(final.body.loading||!final.body.nonEmpty||final.body.signature!==signature||final.documentId!==observed.documentId){signature='';stableSince=0;continue;}result.navigationProof=final.proof;if(profile.frameSelector&&!chapter.locator)result.url=final.documentURL;result.title=chapter.title||result.title;}
+        result.diagnostics={...result.diagnostics,timing:{...result.diagnostics?.timing,navigationMs:navigationFinished-captureStarted,totalMs:Date.now()-captureStarted}};
         return result;
       }
       await delay(160);
     }
-    throw recoveryError('45秒内未确认章节和正文完成切换，未保存旧正文','LOAD_TIMEOUT');
+    // A bare timeout tells the user nothing about which proof never arrived.
+    throw recoveryError(`45秒内未确认章节和正文完成切换，未保存旧正文${lastBlockers.length?`（最后未满足：${lastBlockers.join('、')}）`:''}`,'LOAD_TIMEOUT');
   }
   async function verifySamples(profile,{shouldContinue=()=>true}={}){
     if(profile.samples?.length!==2||profile.samples[0].key===profile.samples[1].key)throw new Error('请选取两个不同的示例章节');

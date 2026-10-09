@@ -2,15 +2,15 @@
 
 把在线设备手册和 API 文档带到本地，供自己查阅和 AI 检索。
 
-ManualDock 是一个本地 Chrome 扩展，附带可选的 AI-agent Skill。用户自行登录设备，工具读取手册目录与正文，逐章保存，导出 Markdown、带图片的离线 HTML、完整 JSON 和采集报告。无需服务器、云端账号或大模型接口。当前版本 **0.2.0**。
+ManualDock 是一个本地 Chrome 扩展，附带可选的 AI-agent Skill。用户自行登录设备，工具读取手册目录与正文，逐章保存，导出 Markdown、带图片的离线 HTML、完整 JSON 和采集报告。无需服务器、云端账号或大模型接口。当前版本 **0.2.2**。
 
 [English](README.md) · [完整使用说明](使用说明.md) · [功能状态](docs/function-status.md) · [验证范围](docs/validation.md)
 
 ## 安装和采集
 
 1. 下载并解压发行包，或克隆本仓库。在 Chrome 打开 `chrome://extensions`，开启开发者模式，选择“加载已解压的扩展程序”，加载 **extension** 文件夹，名称为 **ManualDock**。
-2. 自行登录设备、打开手册，点击扩展。检查自动识别的目录和正文；必要时点选目录区域、正文区域和两个不同示例章节，验证后保存规则。
-3. 填写产品和版本，点击“开始 / 继续导入”。保留手册页与控制页，检查失败和待核对项，再导出。
+2. 自行登录设备、打开手册，点击扩展。检查自动识别的目录和正文；必要时选择目录区域、正文区域和两个不同示例章节，验证后保存规则。
+3. 填写产品和版本，点击“开始 / 继续采集”。保留手册页与控制页，检查失败和待核对项，再导出。
 
 保留固定安装目录，更新时替换该目录内文件并在扩展管理页点“重新加载”。从不同路径重新加载，会得到另一套安装身份和本地进度。配套 [Skill](skill/import-security-manuals/SKILL.md) 名为 `import-security-manuals`；安装 Skill 不会自动安装扩展。
 
@@ -35,3 +35,5 @@ ManualDock 是一个本地 Chrome 扩展，附带可选的 AI-agent Skill。用�
 开发和复现命令见 [开发说明](docs/development.md)。项目代码采用 [MIT](LICENSE)，随附 YAML 解析库保留其 ISC 许可证。
 
 可选的 [GitHub Actions 模板](https://github.com/Jerrywjr/manualdock/blob/main/ci/check.yml) 已提供。将其复制为 `.github/workflows/check.yml` 可启用自动检查；此操作需要工作流写入权限，模板默认未启用。
+
+在线 API 文档与命令行文档都选择“在线手册”；JSON/YAML 规范文件选择“规范文件”。先检查识别结果，再采集，最后导出。识别不准时展开“手动校准”。

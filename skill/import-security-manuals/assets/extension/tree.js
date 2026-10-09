@@ -16,7 +16,7 @@
     const valid = raw => {
       if (typeof raw !== 'string' || !raw.trim() || /[\u0000-\u001f\u007f\\]/.test(raw)) return null;
       const url = new URL(raw);
-      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/adocs.php') return null;
+      if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || !/^\/(?:adocs|cdocs)\.php$/.test(url.pathname)) return null;
       const pairs = [...url.searchParams];
       if (!pairs.length) return url.hash ? null : url;
       if (pairs.length !== 2 || url.searchParams.getAll('index').length !== 1 || url.searchParams.getAll('dataID').length !== 1) return null;
@@ -25,7 +25,7 @@
     try {
       const base = valid(entry);
       const actual = valid(location.href);
-      return base && actual && base.origin === actual.origin ? `${base.origin}/adocs.php` : null;
+      return base && actual && base.origin === actual.origin && base.pathname === actual.pathname ? `${base.origin}${base.pathname}` : null;
     } catch { return null; }
   }
 
@@ -56,7 +56,7 @@
     const canonical = scope(entry);
     if (!canonical) {
       diagnostics.reason = 'invalid-scope';
-      warnings.push('当前地址不在合法的 adocs.php 手册范围，未读取或点击目录。');
+      warnings.push('当前地址不在合法的 adocs.php/cdocs.php 手册范围，未读取或点击目录。');
       return { result, records, duplicates };
     }
     diagnostics.unsupportedFrames = document.querySelectorAll('iframe,frame').length;
@@ -120,11 +120,10 @@
     return { result, records, duplicates };
   }
 
-  function resolve(entry, locator) {
+  function locate(state, locator) {
     if (locator?.kind !== KIND || !Array.isArray(locator.path) || !locator.path.length || locator.path.length > MAX_PATH ||
       locator.path.some(title => typeof title !== 'string' || !title || title.length > MAX_TITLE || title !== space(title)) ||
       (locator.nodeId !== undefined && !/^api-menu-item\d+$/.test(locator.nodeId))) return { reason: 'invalid-locator' };
-    const state = inspect(entry);
     if (state.result.diagnostics.reason) return { reason: state.result.diagnostics.reason };
     if (state.result.diagnostics.truncated) return { reason: 'incomplete-scan' };
     const key = keyOf(locator.path);
@@ -135,6 +134,8 @@
     return { record };
   }
 
+  function resolve(entry, locator) { return locate(inspect(entry), locator); }
+
   function scan({ entry } = {}) { return inspect(entry).result; }
 
   function locallyHidden(element) {
@@ -144,20 +145,23 @@
   }
 
   function open({ entry, locator } = {}) {
-    let located = resolve(entry, locator);
+    // Scan the whole tree once. The target leaf already being located proves
+    // every ancestor is present and expanded in the current DOM, so the loop
+    // below rarely needs to click, and when it does the tree handler may rebuild
+    // nodes — in that case we re-scan once before reading the next ancestor.
+    let located = locate(inspect(entry), locator);
     if (!located.record) return { clicked: false, reason: located.reason };
     const priorURL = location.href;
     const selectedBefore = located.record.row.classList.contains('x-tree-selected');
     const ancestorCount = located.record.ancestors.length;
     for (let i = 0; i < ancestorCount; i++) {
-      // A normal tree handler can rebuild DOM nodes synchronously on expansion.
-      located = resolve(entry, locator);
-      if (!located.record) return { clicked: false, reason: located.reason };
       const ancestor = located.record.ancestors[i];
-      if (ancestor?.branchControl && locallyHidden(ancestor.container)) ancestor.branchControl.click();
+      if (ancestor?.branchControl && locallyHidden(ancestor.container)) {
+        ancestor.branchControl.click();
+        located = locate(inspect(entry), locator);
+        if (!located.record) return { clicked: false, reason: located.reason };
+      }
     }
-    located = resolve(entry, locator);
-    if (!located.record) return { clicked: false, reason: located.reason };
     const { row } = located.record;
     const label = direct(row, 'span').find(element => !element.classList.contains('x-tree-node-indent') && space(textOf(element))) || row;
     if (!row.isConnected || label.closest(EXCLUDED)) return { clicked: false, reason: 'locator-not-found' };
@@ -167,10 +171,35 @@
     return { clicked: true, path: [...locator.path], title: locator.path.at(-1), priorURL, selectedBefore };
   }
 
+  function rowForNodeId(nodeId) {
+    if (!/^api-menu-item\d+$/.test(nodeId)) return null;
+    let rows;
+    try { rows = document.querySelectorAll('[ext\\:tree-node-id="' + nodeId + '"]'); } catch { return null; }
+    if (rows.length !== 1) return null;
+    const node = rows[0];
+    const row = node.matches('.x-tree-node-el') ? node : direct(node, '.x-tree-node-el')[0] || node.closest('.x-tree-node-el');
+    return row && row.isConnected ? row : null;
+  }
+
+  // The controller polls this while waiting for a chapter, so verifying must stay
+  // cheap: a full tree scan on a large manual can consume the whole wait window.
+  // The observed node id is unique in the document, so one lookup plus the row
+  // title proves which row is meant. Anything ambiguous returns null and the
+  // caller falls back to a complete scan instead of guessing.
+  function quickVerify(locator) {
+    const row = rowForNodeId(locator?.nodeId);
+    if (!row) return null;
+    if (rowTitle(row) !== locator.path.at(-1)) return null;
+    return Boolean(row.classList.contains('x-tree-selected'));
+  }
+
   function verify({ entry, locator } = {}) {
+    const path = Array.isArray(locator?.path) ? [...locator.path] : [];
+    const quick = path.length ? quickVerify(locator) : null;
+    if (quick !== null) return { kind: KIND, path, verified: quick, reason: quick ? 'selected-path-matches' : 'selected-path-mismatch' };
     const located = resolve(entry, locator);
     const verified = Boolean(located.record?.row.classList.contains('x-tree-selected'));
-    return { kind: KIND, path: Array.isArray(locator?.path) ? [...locator.path] : [], verified,
+    return { kind: KIND, path, verified,
       reason: verified ? 'selected-path-matches' : located.reason || 'selected-path-mismatch' };
   }
 
