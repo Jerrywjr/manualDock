@@ -39,7 +39,16 @@ test('network interruption saves good chapters and an automatic retry resumes on
  io.capture=async c=>{calls.push(c.key);if(!online&&c.title!=='chapter 0')throw new TypeError('Failed to fetch');return capture(c);};
  await new ImportEngine(task,io).run();assert.equal(task.status,'paused');assert.equal(task.recovery.reason,'network');assert.equal(taskHasRetryableWork(task),true);assert.equal(Object.keys(task.pages).length,1);
  const saved=JSON.stringify(task.pages),first=task.queue[0].key;online=true;calls=[];assert.equal(resetRetryableChapters(task),3);
- await new ImportEngine(task,io).run();assert.equal(task.status,'finished');assert.equal(calls.includes(first),false);assert.equal(Object.keys(task.pages).length,5);assert.equal(JSON.stringify({[first]:task.pages[first]}),saved);assert.equal(taskHasRetryableWork(task),false);
+  await new ImportEngine(task,io).run();assert.equal(task.status,'finished');assert.equal(calls.includes(first),false);assert.equal(Object.keys(task.pages).length,5);assert.equal(JSON.stringify({[first]:task.pages[first]}),saved);assert.equal(taskHasRetryableWork(task),false);
+});
+test('a chapter that fails while being stored no longer ends the whole manual',async()=>{
+ const task=createTask(p,'IPS','1'),io=ioFor(task);io.discover=async()=>({items:links.slice(0,5)});
+ const real=io.save;let keyed=0;io.save=async(t,key)=>{if(key&&++keyed===2)throw new TypeError('Illegal invocation');return real(t,key);};
+ await new ImportEngine(task,io).run();
+ assert.equal(task.status,'finished');
+ assert.equal(task.queue.filter(c=>c.status==='captured').length,4);
+ assert.equal(task.queue.filter(c=>c.status==='failed').length,1);
+ assert.match(task.queue.find(c=>c.status==='failed').error,/Illegal invocation/);
 });
 test('a transient discovery failure is recoverable before the first chapter has been found',async()=>{
  const task=createTask(p),io=ioFor(task);io.discover=async()=>{throw new Error('net::ERR_CONNECTION_RESET');};

@@ -9,7 +9,10 @@ export function createTask(profile,product='未知',version='未知') {
 export class ImportEngine {
   constructor(task,io){this.task=task;this.io=io;this.paused=false;this.running=false;}
   pause(){this.paused=true;}
-  async checkpoint(key=null){this.task.updatedAt=new Date().toISOString();await this.io.save(this.task,key);this.io.onChange?.(this.task);}
+  async checkpoint(key=null){this.task.updatedAt=new Date().toISOString();await this.io.save(this.task,key);
+    // A rendering problem in the control page must never abort a running import:
+    // the captured page is already stored by the time the refresh is attempted.
+    try{this.io.onChange?.(this.task);}catch(error){console.warn('ManualDock：控制页刷新失败，采集继续。',error);}}
   merge(items=[]){
     const known=new Set(this.task.queue.map(c=>c.key));
     for(const raw of items){const chapter=cleanChapter(raw,this.task.profile);if(!chapter||known.has(chapter.key))continue;
@@ -43,15 +46,28 @@ export class ImportEngine {
           chapter.recovery=classifyRecoveryError({...page,error:chapter.error});this.task.recovery={...chapter.recovery,message:chapter.error};
           await this.checkpoint();if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}continue;
         }
-        failures=0;const hash=await contentHash(page.text?.trim()?page.text:page.html);
+        failures=0;
+        // Hashing, duplicate detection and storing were outside every try/catch,
+        // so one failure there ended the whole manual. Keep already saved pages
+        // and record a failed chapter instead.
+        try{
+        const hash=await contentHash(page.text?.trim()?page.text:page.html);
         const duplicate=Object.entries(this.task.pages).find(([key,p])=>key!==chapter.key&&p.hash===hash);
         chapter.status=duplicate?'review':'captured';
         if(duplicate)chapter.error='正文与其他章节相同，已保留，待核对';
         this.task.pages[chapter.key]={...page,key:chapter.key,hash,capturedAt:new Date().toISOString()};
         await this.checkpoint(chapter.key);
+        }catch(error){
+          console.error('ManualDock：章节保存失败',chapter.key,error);
+          chapter.status='failed';chapter.error=error?.message||'章节保存失败';
+          chapter.recovery=classifyRecoveryError(error);this.task.recovery={...chapter.recovery,message:chapter.error};
+          try{await this.checkpoint();}catch(saveError){console.warn('ManualDock：记录失败章节未完成存档。',saveError);}
+          if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}
+          continue;
+        }
       }
       this.task.status=this.paused?'paused':'finished';await this.checkpoint();
-    }catch(error){this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:error.message};await this.checkpoint();throw error;}
+    }catch(error){console.error('ManualDock：采集中断',error);this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:error.message,stack:String(error?.stack||'').slice(0,4000)};await this.checkpoint();throw error;}
     finally{this.running=false;}
   }
 }
