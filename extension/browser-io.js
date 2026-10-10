@@ -57,7 +57,9 @@ export function createBrowserIO(tabId){
     let current=await tab();if(!current.url||new URL(current.url).origin!==profile.origin)throw new Error('原标签页已离开手册网站');
     if(loginURL(current.url))return {status:'auth'};await install();const before=await state(profile,chapter);
     if(before?.body.auth)return {status:'auth'};
-    if(chapter.locator){try{const result=await adapter('open',{profile,chapter});if(!result?.clicked)throw new Error(result?.reason||'无法唯一打开所选章节');}catch(error){if(!navigationInterrupted(error))throw error;}}
+    // A page-side failure arrives as a reason string; keep the structured fault
+    // that the adapter captured so the real cause survives the script boundary.
+    if(chapter.locator){try{const result=await adapter('open',{profile,chapter});if(!result?.clicked)throw Object.assign(new Error(result?.reason||'无法唯一打开所选章节'),{fault:result?.fault,stage:'open-directory',chapterKey:chapter.key});}catch(error){if(!navigationInterrupted(error))throw Object.assign(error,{stage:error.stage||'open-directory',chapterKey:error.chapterKey??chapter.key});}}
     else{const target=normalizeDocumentURL(chapter.url,profile);if(!target)throw new Error('章节不在手册范围内');
       if(profile.frameSelector){await chrome.scripting.executeScript({target:{tabId},args:[profile.frameSelector,target,profile.origin],func:(selector,target,origin)=>{
         const frames=document.querySelectorAll(selector);if(frames.length!==1||!frames[0].matches('iframe,frame'))throw new Error('无法唯一定位文档框架');
@@ -66,7 +68,7 @@ export function createBrowserIO(tabId){
         frame.contentWindow.location.assign(target);return {navigated:true};
       }});}else await chrome.tabs.update(tabId,{url:target});
     }
-    const start=Date.now(),deadline=start+45000;let signature='',stableSince=0,installed=false,lastBlockers=[];
+    const start=Date.now(),deadline=start+45000;let signature='',stableSince=0,installed=false,lastBlockers=[],lastFault=null;
     await delay(180);
     while(Date.now()<deadline){
       current=await tab();if(/^chrome-error:\/\//i.test(current.url||''))throw recoveryError('手册页面处于网络错误状态','NETWORK_ERROR');if(!current.url||new URL(current.url).origin!==profile.origin)throw new Error('页面跳转到其他来源，已停止');
@@ -76,8 +78,10 @@ export function createBrowserIO(tabId){
       if(!chapter.locator&&!profile.frameSelector&&normalizeDocumentURL(current.url,profile)!==chapter.url){await delay(160);continue;}
       let observed;
       try{if(!installed){await install();installed=true;}observed=await state(profile,chapter);}
-      catch(error){if(navigationInterrupted(error)){installed=false;await delay(160);continue;}throw error;}
+      catch(error){if(navigationInterrupted(error)){installed=false;await delay(160);continue;}throw Object.assign(error,{stage:error.stage||'read-state',chapterKey:error.chapterKey??chapter.key});}
       if(observed?.body.auth)return {status:'auth'};
+      const observedFault = observed?.proof?.fault || observed?.body?.fault || null;
+      if(observedFault)lastFault = observedFault;
       const changed=observed?.body.signature!==before?.body.signature;
       const newDocument=Boolean(before?.documentId&&observed?.documentId&&before.documentId!==observed.documentId);
       const switched=newDocument||before?.proof?.verified||changed;
@@ -92,6 +96,7 @@ export function createBrowserIO(tabId){
         const result=r[0]?.result;if(!result)throw new Error('页面未返回正文');
         if(result.status==='ok'){const final=await state(profile,chapter);if(!final?.proof?.verified)throw new Error('正文读取后目录选中状态已变化');if(final.body.loading||!final.body.nonEmpty||final.body.signature!==signature||final.documentId!==observed.documentId){signature='';stableSince=0;continue;}result.navigationProof=final.proof;if(profile.frameSelector&&!chapter.locator)result.url=final.documentURL;result.title=chapter.title||result.title;}
         result.diagnostics={...result.diagnostics,timing:{...result.diagnostics?.timing,navigationMs:navigationFinished-captureStarted,totalMs:Date.now()-captureStarted}};
+        if(lastFault&&!result.diagnostics?.fault)result.diagnostics={...result.diagnostics,fault:lastFault};
         return result;
       }
       await delay(160);

@@ -1,6 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {RETRY_INTERVAL_MS,classifyRecoveryError,resetRetryableChapters,taskHasRetryableWork} from '../extension/recovery.js';
+import {RETRY_INTERVAL_MS,classifyRecoveryError,resetRetryableChapters,taskHasRetryableWork,faultOf,pushFault} from '../extension/recovery.js';
+
+test('a fault keeps its identity and stage, carries no page content, and survives the script boundary',()=>{
+  const error=new TypeError('Illegal invocation');
+  error.stack='TypeError: Illegal invocation\n    at locallyHidden (tree.js:143)';
+  const fault=faultOf(error,'open-directory',{key:'toc:x',title:'配置示例'});
+  assert.equal(fault.name,'TypeError');
+  assert.equal(fault.message,'Illegal invocation');
+  assert.match(fault.stack,/tree\.js:143/);
+  assert.equal(fault.stage,'open-directory');
+  assert.equal(fault.chapterTitle,'配置示例');
+  assert.equal(fault.chapterKey,'toc:x');
+  assert.deepEqual(Object.keys(fault).sort(),['at','chapterKey','chapterTitle','message','name','stack','stage'],
+    'a fault must not carry page content, form values, cookies or credentials');
+  // chrome.scripting.executeScript() moves values by structured clone.
+  assert.deepEqual(structuredClone(fault),fault);
+  assert.ok(faultOf('boom','s',null).message==='boom');
+});
+
+test('faults are stored newest first and bounded so a long manual cannot grow without limit',()=>{
+  const task={};
+  for(let i=0;i<80;i++)pushFault(task,faultOf(new Error('e'+i),'capture-chapter',null));
+  assert.equal(task.errorLog.length,50);
+  assert.equal(task.errorLog[0].message,'e79');
+  assert.equal(pushFault(null,faultOf(new Error('x'),'s',null)),null);
+});
 
 test('the automatic recovery interval is exactly three minutes',()=>assert.equal(RETRY_INTERVAL_MS,180000));
 test('temporary network, loading and authentication failures are distinguished from configuration errors',()=>{

@@ -31,6 +31,7 @@ function render(){
  document.querySelectorAll('[data-panel="web"] button,[data-panel="web"] input,[data-panel="web"] select').forEach(el=>el.disabled=busy||!initialized||(profileSelectionRequired&&!['profile-list','detect','import-profile'].includes(el.id)));
  document.querySelectorAll('#product,#version,[data-panel="spec"] input,[data-panel="spec"] button').forEach(el=>el.disabled=busy);
  renderRotationControls();
+ renderErrorLog();
  $('pause').disabled=!engine?.running&&!task?.autoRecovery?.enabled;
  renderRecognition(queue);$('error').hidden=!$('error').textContent;
  const recovery=task?.autoRecovery;
@@ -135,7 +136,11 @@ async function run(retry=false,{automatic=false,expectedTaskId=null,expectedAtte
    if(await isRotating())throw new Error('此标签页正在导航轮换，请另开手册标签页采集');
    if(generation!==runGeneration)return;await verifyAndSave(()=>generation===runGeneration);if(generation!==runGeneration)return;
    if(automatic)resetRetryableChapters(task);
-   else if(retry)for(const c of task.queue)if(['failed','review'].includes(c.status)){c.status='pending';delete c.error;delete c.recovery;}
+   // Re-collecting a "review" chapter replaces its saved page, so never do it
+   // silently; failed chapters carry no kept body and are safe to retry.
+   else if(retry){const reviews=task.queue.filter(c=>c.status==='review');
+    for(const c of task.queue)if(c.status==='failed'){c.status='pending';delete c.error;delete c.recovery;}
+    if(reviews.length&&confirm(`有 ${reviews.length} 个「待核对」章节。继续会用新采集的内容替换已保存的原文，原有正文不再保留。\n\n确认重新采集这些章节？`))for(const c of reviews){c.status='pending';delete c.error;delete c.recovery;}}
    engine=new ImportEngine(task,{discover:io.discover,capture:io.capture,save:saveTask,onChange:render});await engine.run();
   }catch(e){task.recovery={...classifyRecoveryError(e),message:e.message};task.status=task.recovery.reason==='auth'?'waiting_login':'paused';error(e);}
   finally{
@@ -150,11 +155,14 @@ async function run(retry=false,{automatic=false,expectedTaskId=null,expectedAtte
 
 function download(text,name,type='application/json'){const url=URL.createObjectURL(new Blob([text],{type:type+';charset=utf-8'}));const a=document.createElement('a');a.href=url;a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(url),10000);}
 const statusLabels={ready:'准备就绪',paused:'已暂停',finished:'已处理当前发现的章节',waiting_login:'等待重新登录',retry_wait:'等待自动重试'};
-function taskState(task){
+ function taskState(task){
  if(!task)return '未知';
  // A task left as running by a closed control page must not look live forever.
- const fresh=Date.now()-Date.parse(task.updatedAt||0)<120000;
- if(task.status==='running')return fresh?'正在采集':'已停止，无新的保存';
+ // The heartbeat is written by every checkpoint; a stale one means interrupted,
+ // never background execution.
+ const stamp=Date.parse(task.heartbeat?.at||task.updatedAt||0);
+ const fresh=Number.isFinite(stamp)&&Date.now()-stamp<120000;
+ if(task.status==='running')return fresh?'正在采集':'已中断，可继续采集';
  return statusLabels[task.status]||task.status||'未知';
 }
 function stamp(value){const time=Date.parse(value||0);return Number.isFinite(time)?new Date(time).toLocaleString():'未知';}
@@ -162,6 +170,77 @@ function ago(value){const time=Date.parse(value||0);if(!Number.isFinite(time))re
  const minutes=Math.round((Date.now()-time)/60000);
  if(minutes<1)return '刚刚';if(minutes<60)return minutes+' 分钟前';
  const hours=Math.round(minutes/60);if(hours<24)return hours+' 小时前';return Math.round(hours/24)+' 天前';}
+const loginURL=url=>{try{return /\/(?:login|logon|signin|sign-in|sso)(?:[./_-]|$)/i.test(new URL(url).pathname);}catch{return false;}};
+/** Prove the current tab really serves this task before binding: scope, login
+ *  state and the saved calibration rule, never origin equality alone. */
+async function checkBind(profile,task){
+ if(!profile)return {ok:false,reason:'该任务没有可用的识别规则，请重新识别'};
+ let current;try{current=await io.tab();}catch(error){return {ok:false,reason:error.message};}
+ if(!current?.url)return {ok:false,reason:'无法读取当前标签页地址，请从手册页点击扩展'};
+ let address;try{address=new URL(current.url);}catch{return {ok:false,reason:'当前标签页地址无效'};}
+ if(address.origin!==profile.origin)return {ok:false,reason:`请在手册来源 ${profile.origin} 的标签页点击扩展后再绑定（当前是 ${address.origin}）`};
+ if(loginURL(address.href))return {ok:false,reason:'当前页面是登录页，请先登录并打开手册章节页'};
+ if(!normalizeDocumentURL(address.href,profile))return {ok:false,reason:'当前页面不在该手册范围内（路径前缀或查询参数不符），请打开手册章节页'};
+ try{
+  await io.install();
+  const r=await chrome.scripting.executeScript({target:{tabId},args:[profile],func:profile=>{
+   const adapters=globalThis.SecurityManualAdapters;if(!adapters)return {ok:false,reason:'页面脚本未加载，请刷新手册页'};
+   try{
+    const doc=profile.frameSelector?document.querySelector(profile.frameSelector)?.contentDocument:document;
+    if(!doc?.documentElement)return {ok:false,reason:'无法访问文档框架'};
+    if(!profile.tocSelector)return {ok:false,reason:'已保存规则缺少目录选择器，请重新校准'};
+    if(doc.querySelectorAll(profile.tocSelector).length!==1)return {ok:false,reason:'已保存的目录规则在当前页面不唯一，请重新校准'};
+    if(profile.contentSelector&&doc.querySelectorAll(profile.contentSelector).length!==1)return {ok:false,reason:'已保存的正文规则在当前页面不唯一，请重新校准'};
+    const body=globalThis.ManualCapture.readState({entry:profile.entry,profile,selector:profile.contentSelector});
+    if(body?.auth)return {ok:false,reason:'当前页面需要登录，请登录后重试'};
+    return {ok:true};
+   }catch(error){return {ok:false,reason:error?.message||'规则检查失败'};}
+  }});
+  const result=r[0]?.result;if(!result?.ok)return {ok:false,reason:result?.reason||'无法在当前标签页完成规则检查'};
+ }catch(error){return {ok:false,reason:'无法在当前标签页执行检查：'+error.message};}
+ return {ok:true};
+}
+/** Open any saved task; a web task is bound only after checkBind passes. */
+async function openTask(summary){
+ const full=await loadTask(summary.taskId);if(!full)throw new Error('任务已不存在，请刷新列表');
+ if(full.sourceKind!=='web'){task=full;$('product').value=task.product;$('version').value=task.version;render();return;}
+ if(!full.profile)throw new Error('该任务没有保存识别规则，请重新识别');
+ let saved;try{saved=validateProfile(full.profile);}catch(error){throw new Error('已保存的识别规则无效：'+error.message);}
+ const check=await checkBind(saved,full);
+ task=full;$('product').value=task.product;$('version').value=task.version;
+ if(!check.ok){error(new Error(check.reason));render();return;}
+ profile=saved;populateProfile();
+ task.autoRecovery={...(task.autoRecovery||{}),sourceTabId:tabId};
+ await setSetting('recovery-tab:'+tabId,task.taskId);
+ await saveTask(task);
+ if(task.status==='running'){task.status='paused';await saveTask(task);}
+ showMode('web');render();refreshRetryClock();
+}
+/** A closed console leaves status 'running'; only mark it interrupted when no
+ *  other console holds the task lock. This is labelling, not background work. */
+async function markInterrupted(){
+ for(const summary of await listTasks()){
+  if(summary.sourceKind!=='web'||summary.status!=='running')continue;
+  const stamp=Date.parse(summary.heartbeat?.at||summary.updatedAt||0);
+  if(Number.isFinite(stamp)&&Date.now()-stamp<120000)continue;
+  await navigator.locks.request('task:'+summary.taskId,{ifAvailable:true},async lock=>{
+   if(!lock)return;
+   const full=await loadTask(summary.taskId);if(!full||full.status!=='running')return;
+   const at=Date.parse(full.heartbeat?.at||full.updatedAt||0);
+   if(Number.isFinite(at)&&Date.now()-at<120000)return;
+   full.status='paused';full.recovery={...(full.recovery||{}),reason:'interrupted',message:'控制台已关闭，采集中断；可重新绑定标签页后继续采集'};
+   await saveTask(full);
+  });
+ }
+}
+function renderErrorLog(){
+ const log=Array.isArray(task?.errorLog)&&task.errorLog.length?task.errorLog.slice(0,10):null;
+ $('error-log').textContent=log?log.map(entry=>{
+  const when=entry.at?new Date(entry.at).toLocaleString():'未知时间';
+  const where=[entry.stage,entry.chapterTitle].filter(Boolean).join(' · ')||'未标注阶段';
+  return `${when}  ${where}\n  ${entry.name}: ${entry.message}\n  ${String(entry.stack||'').split('\n')[0]||''}`;
+ }).join('\n\n'):'暂无记录';
+}
 async function library(){
  const tasks=(await listTasks()).sort((a,b)=>Date.parse(b.updatedAt||0)-Date.parse(a.updatedAt||0));
  if(!tasks.length){const li=document.createElement('li');li.className='empty-hint';li.textContent='还没有保存的任务。';$('task-list').replaceChildren(li);return;}
@@ -170,15 +249,16 @@ async function library(){
   const li=document.createElement('li');li.className='task-item';
   const open=document.createElement('button');open.className='task-open';
   for(const text of [`${t.product||'未命名'} · ${t.version||'未知'}`,
-   `${t.sourceKind==='openapi'?'规范文件':'在线手册'} · 已保存 ${captured}/${total} 章 · ${taskState(t)}`,
+   `${t.sourceKind==='openapi'?'规范文件':'在线手册'} · 已保存 ${captured}/${total} 章 · ${taskState(t)}${t.errorLog?.length?` · 错误 ${t.errorLog.length} 条`:''}`,
    `来源 ${t.entry||'未知'}`,`更新 ${stamp(t.updatedAt)}（${ago(t.updatedAt)}） · 创建 ${stamp(t.createdAt)}`]){
    const span=document.createElement('span');span.textContent=text;open.append(span);}
   // A specification task is local, so it can always be opened; a web task needs
   // the control page that is bound to the same manual tab.
-  const usable=t.sourceKind!=='web'||t.profile?.origin===sourceOrigin;
-  open.disabled=!usable;open.title=usable?'在控制页打开这个任务':'请在对应的手册标签页点击扩展，再打开此任务';
-  open.onclick=()=>locked(async()=>{task=await loadTask(t.taskId);if(task.profile&&task.profile.origin===sourceOrigin){profile=validateProfile(task.profile);populateProfile();}
-   $('product').value=task.product;$('version').value=task.version;if(task.sourceKind==='web')showMode('web');render();},{source:false});
+  // Every saved task is listed and selectable; binding is decided by checkBind
+  // at click time, not by comparing origins in the list.
+  open.disabled=false;
+  open.title=t.sourceKind==='web'?'打开这个任务；若当前标签页不是该手册，会先检查来源、手册范围、登录状态与采集规则':'在控制页打开这个规范任务';
+  open.onclick=()=>locked(async()=>{await openTask(t);},{source:false});
   const save=document.createElement('button');save.textContent='导出 JSON';save.className='quiet';
   save.onclick=async()=>{try{const full=await loadTask(t.taskId);if(full)download(buildExports(full).json,`${String(t.product||'manual').replace(/[\\/:*?"<>|]/g,'_')}.json`);}catch(e){error(e);}};
   const drop=document.createElement('button');drop.textContent='删除';drop.className='quiet danger';
@@ -283,5 +363,5 @@ async function initialize(){
  else if(selected.status==='ambiguous'){profileSelectionRequired=true;$('profile-status').textContent='多份已保存规则或任务均匹配，无法确定最近使用项；请从列表明确选择已保存规则';}
  else{await locked(detect,{initialization:true});}
  rotationPoll=setInterval(()=>{if(mode==='rotation'&&!busy&&!rotationBusy)rotationCall('snapshot').catch(e=>{$('rotation-status').textContent='状态未知：'+e.message;});},3000);
- }catch(e){error(e);$('connection').textContent=e.message;}finally{initialized=Boolean(sourceOrigin);try{await restoreRetryDeadline();}catch(e){error(e);}render();}}
+ }catch(e){error(e);$('connection').textContent=e.message;}finally{initialized=Boolean(sourceOrigin);try{await restoreRetryDeadline();await markInterrupted();}catch(e){error(e);}render();}}
 render();initialize();

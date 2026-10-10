@@ -28,7 +28,7 @@ async function setup(t,{holdTab=false,savedProfiles=[],savedTasks=[],currentURL=
   }}}});
  w.navigator.locks={request:async(name,_options,callback)=>{if(held.has(name))return callback(null);held.add(name);try{return await callback({name});}finally{held.delete(name);}}};
  w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=()=>{};w.setInterval=()=>0;
- w.eval(source+'\n;globalThis.TestPanel={render,detect,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
+ w.eval(source+'\n;globalThis.TestPanel={render,detect,checkBind,openTask,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
  return{w,document:w.document,state,disk,held,api:w.TestPanel,releaseTab,settle:async()=>{for(let i=0;i<15;i++)await flush();}};
 }
 test('panel web actions remain gated until initialization finishes',async t=>{
@@ -234,4 +234,23 @@ test('a successful navigation trial remains valid when only the click interval c
  assert.equal(p.api.getRotationVerified(),true);p.document.getElementById('rotation-interval').value='120';p.document.getElementById('rotation-interval').dispatchEvent(new p.w.Event('change'));
  p.document.getElementById('rotation-start').click();await p.settle();assert.equal(p.document.getElementById('error').textContent,'');assert.equal(p.state.rotation.running,true);
  p.document.querySelector('#rotation-targets button').click();await p.settle();assert.equal(p.api.getRotationVerified(),false,'removing a target still requires a new trial');
+});
+
+test('a saved task from another origin stays listed and selectable, and a stale running task is marked interrupted',async t=>{
+ const foreign=profiles.validateProfile({...seed(),id:'foreign',entry:'https://other.test/docs/index'});
+ const task={schemaVersion:2,taskId:'foreign-task',profileId:'foreign',profileRevision:1,profile:foreign,entry:foreign.entry,sourceKind:'web',
+  product:'IPS',version:'1',createdAt:'2020-01-01T00:00:00.000Z',updatedAt:'2020-01-01T00:00:00.000Z',status:'running',
+  queue:[{key:'url:https://other.test/docs/A',url:'https://other.test/docs/A',title:'A',status:'captured'}],pages:{},discoveryWarnings:[],scanDiagnostics:{}};
+ const p=await setup(t,{savedTasks:[task],currentURL:'https://manual.test/docs/index'});await p.settle();
+ assert.equal(p.disk.get('foreign-task').status,'paused','a task left running by a closed console is recognised as interrupted, not live');
+ p.document.querySelector('[data-mode="library"]').click();await p.settle();
+ // The console also auto-created a task for this tab; pick the foreign one.
+ const item=[...p.document.querySelectorAll('#task-list .task-item')].find(li=>li.textContent.includes('other.test'));
+ assert.ok(item,'the task must be listed even though its origin differs from this tab');
+ assert.doesNotMatch(item.textContent,/正在采集/);
+ const open=item.querySelector('.task-open');
+ assert.equal(open.disabled,false,'the task must be selectable without matching origin');
+ open.click();await p.settle();
+ assert.match(p.document.getElementById('error').textContent,/other\.test/,'binding is refused with the reason, not silently matched by origin');
+ assert.equal(p.api.getTask().taskId,'foreign-task','the task is still loaded so the user can switch tabs and retry');
 });

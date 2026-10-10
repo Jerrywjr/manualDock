@@ -1,6 +1,6 @@
 import {cleanChapter,jobKey} from './profiles.js';
 import {contentHash} from './core.js';
-import {classifyRecoveryError} from './recovery.js';
+import {classifyRecoveryError,faultOf,pushFault} from './recovery.js';
 export function createTask(profile,product='未知',version='未知') {
   return {schemaVersion:2,taskId:jobKey(profile,product,version),profileId:profile.id,profileRevision:profile.revision,profile,
     entry:profile.entry,sourceKind:'web',product:product||'未知',version:version||'未知',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
@@ -9,7 +9,11 @@ export function createTask(profile,product='未知',version='未知') {
 export class ImportEngine {
   constructor(task,io){this.task=task;this.io=io;this.paused=false;this.running=false;}
   pause(){this.paused=true;}
-  async checkpoint(key=null){this.task.updatedAt=new Date().toISOString();await this.io.save(this.task,key);
+  async checkpoint(key=null){this.task.updatedAt=new Date().toISOString();
+    // A durable heartbeat lets a reopened console tell an interrupted task from
+    // one that is still being collected. It is not background execution.
+    this.task.heartbeat={at:this.task.updatedAt,status:this.task.status,chapter:this.task.queue?.find(c=>c.status==='processing')?.title||null};
+    await this.io.save(this.task,key);
     // A rendering problem in the control page must never abort a running import:
     // the captured page is already stored by the time the refresh is attempted.
     try{this.io.onChange?.(this.task);}catch(error){console.warn('ManualDock：控制页刷新失败，采集继续。',error);}}
@@ -38,12 +42,18 @@ export class ImportEngine {
       while(!this.paused){
         const chapter=this.task.queue.find(c=>c.status==='pending');if(!chapter)break;
         chapter.status='processing';delete chapter.error;delete chapter.recovery;await this.checkpoint();
-        let page;try{page=await this.io.capture(chapter,this.task.profile);}catch(error){page={status:'error',error:error.message,code:error.code};}
+        // This catch used to keep only error.message, so the console showed a
+        // bare string and nothing was logged. Keep the structured fault and the
+        // console record so the failing frame can be identified later.
+        let page;try{page=await this.io.capture(chapter,this.task.profile);}catch(error){console.error('ManualDock：章节采集失败',chapter.key,error);
+          const fault=faultOf(error,error?.stage||'capture-chapter',chapter);
+          page={status:'error',error:error.message,code:error.code,diagnostics:{...(page?.diagnostics||{}),fault}};}
         if(page.status==='auth'){chapter.status='waiting_login';chapter.recovery=classifyRecoveryError(page);this.task.status='waiting_login';this.task.recovery={...chapter.recovery,message:'登录已失效，等待用户登录后恢复'};await this.checkpoint();return;}
         const hasBody=Boolean(page.text?.trim())||(Number.isInteger(page.diagnostics?.images?.embedded)&&page.diagnostics.images.embedded>0&&/<img\b[^>]*src=["']data:image\//i.test(page.html||''));
         if(page.status!=='ok'||!hasBody||page.navigationProof?.verified!==true){
           chapter.status='failed';chapter.error=page.error||page.diagnostics?.reason||'未确认所选章节的正文加载完成';
           chapter.recovery=classifyRecoveryError({...page,error:chapter.error});this.task.recovery={...chapter.recovery,message:chapter.error};
+          if(page.diagnostics?.fault)pushFault(this.task,page.diagnostics.fault);
           await this.checkpoint();if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}continue;
         }
         failures=0;

@@ -15,6 +15,34 @@ export function recoveryError(message, code) {
   return Object.assign(new Error(message), {code});
 }
 
+// A page-side failure used to collapse into a bare message string, so the real
+// cause was unrecoverable once it crossed chrome.scripting.executeScript(). This
+// keeps only what identifies a fault, never page content, form values, cookies,
+// tokens or credentials.
+export function faultOf(error, stage, chapter) {
+  // Prefer the fault carried across the script boundary: its stack points at the
+  // frame that actually failed, unlike the local wrapper's stack.
+  const carried = error?.fault && typeof error.fault === 'object' ? error.fault : null;
+  const source = carried || (error && typeof error === 'object' ? error : {message: String(error ?? '')});
+  return {
+    name: String(source.name || 'Error').slice(0, 100),
+    message: String(source.message || '').slice(0, 500),
+    stack: String(source.stack || '').split('\n').slice(0, 8).join('\n').slice(0, 1200),
+    stage: String(carried?.stage || stage || 'unknown').slice(0, 60),
+    chapterKey: chapter?.key == null ? null : String(chapter.key).slice(0, 200),
+    chapterTitle: chapter?.title == null ? null : String(chapter.title).slice(0, 200),
+    at: new Date().toISOString(),
+  };
+}
+
+/** Keeps the newest faults on the task so they survive closing the console. */
+export function pushFault(task, fault, limit = 50) {
+  if (!task || !fault) return task;
+  const log = Array.isArray(task.errorLog) ? task.errorLog : [];
+  task.errorLog = [fault, ...log].slice(0, limit);
+  return task;
+}
+
 export function resetRetryableChapters(task) {
   let count=0;
   for (const chapter of task.queue || []) {

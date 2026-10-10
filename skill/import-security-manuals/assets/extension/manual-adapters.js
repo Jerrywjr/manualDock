@@ -60,10 +60,21 @@
     }
     throw new Error('无法定位所选区域');
   }
+  // Only what identifies a fault crosses the chrome.scripting.executeScript()
+  // boundary: never page content, form values, cookies or credentials.
+  const errShape = e => e?.fault || ({ name: String(e?.name || 'Error'), message: String(e?.message || e || '').slice(0, 500),
+    stack: String(e?.stack || '').split('\n').slice(0, 8).join('\n').slice(0, 1200) });
+
   function visible(el) {
     if (!el?.isConnected || !el.getClientRects().length) return false;
     for (let node = el; node; node = node.parentElement) {
-      const style = node.ownerDocument.defaultView.getComputedStyle(node);
+      // Undecidable visibility must never be reported as visible, or the caller
+      // would click and collect from an entry that was never proven usable.
+      const view = node.ownerDocument?.defaultView;
+      if (!view) throw Object.assign(new Error('无法读取目录项的显示状态：文档窗口不可用'), { fault: errShape(new Error('defaultView unavailable')) });
+      let style;
+      try { style = view.getComputedStyle(node); }
+      catch (error) { throw Object.assign(new Error(error?.message || '无法读取目录项的显示状态'), { fault: errShape(error) }); }
       if (node.hidden || node.getAttribute('aria-hidden') === 'true' || style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility)) return false;
     }
     return true;
@@ -259,7 +270,7 @@
       }
       const state = inventory(profile);
       return {items:state.records.map(record=>record.chapter),warnings:[...state.warnings,...(progress.expansionLimited?['目录展开达到上限，请核对未加载分支']:[])],diagnostics:{...state.diagnostics,...progress}};
-    } catch (error) { return {items:[],warnings:[error.message],diagnostics:{reason:'invalid-directory'}}; }
+    } catch (error) { return {items:[],warnings:[error.message],fault:errShape(error),diagnostics:{reason:'invalid-directory'}}; }
   }
   function locate(profile, chapter) {
     if (!normalizeURL(chapter?.url,profile)) throw new Error('章节地址不在允许范围');
@@ -282,7 +293,7 @@
       const {target} = locate(profile,chapter);
       if (!visible(target) || blocked(target)) throw new Error('目录项不可见或不可用，请展开目录后重试');
       target.click();return {clicked:true};
-    } catch(error) {return {clicked:false,reason:error.message};}
+    } catch(error) {return {clicked:false,reason:error.message,fault:errShape(error)};}
   }
   const markerSelected = el => el.getAttribute('aria-selected')==='true' || Boolean(el.getAttribute('aria-current') && el.getAttribute('aria-current')!=='false') || el.matches('.selected,.active,.current,.x-tree-selected,.ix-menu-item-selected');
 
@@ -314,7 +325,7 @@
       if (quick !== null) return {...result, verified: quick, reason: quick ? 'selected-directory-marker' : 'selected-directory-mismatch'};
       const {target,row} = locate(profile,chapter);
       return {...result,verified:markerSelected(target)||markerSelected(row),reason:'selected-directory-marker'};
-    } catch(error) {return {...result,reason:error.message};}
+    } catch(error) {return {...result,reason:error.message,fault:errShape(error)};}
   }
   function pick({kind,profile=activeProfile} = {}) {
     if (!['toc','content','sample','rotation'].includes(kind)) return Promise.reject(new Error('未知点选类型'));

@@ -138,13 +138,26 @@
 
   function scan({ entry } = {}) { return inspect(entry).result; }
 
+  // Only what identifies a fault crosses the chrome.scripting.executeScript()
+  // boundary: never page content, form values, cookies or credentials.
+  const errShape = e => e?.fault || ({ name: String(e?.name || 'Error'), message: String(e?.message || e || '').slice(0, 500),
+    stack: String(e?.stack || '').split('\n').slice(0, 8).join('\n').slice(0, 1200) });
+
   function locallyHidden(element) {
     if (!element || element.hidden || element.getAttribute('aria-hidden') === 'true') return true;
-    const style = element.ownerDocument.defaultView.getComputedStyle(element);
+    // Visibility that cannot be determined must never be answered as "visible",
+    // otherwise the caller keeps collecting from a row it never proved. Raise
+    // instead, carrying the original error so it survives the script boundary.
+    const view = element.ownerDocument?.defaultView;
+    if (!view) throw Object.assign(new Error('无法读取目录行的显示状态：文档窗口不可用'), { fault: errShape(new Error('defaultView unavailable')) });
+    let style;
+    try { style = view.getComputedStyle(element); }
+    catch (error) { throw Object.assign(new Error(error?.message || '无法读取目录行的显示状态'), { fault: errShape(error) }); }
     return style.display === 'none' || ['hidden', 'collapse'].includes(style.visibility);
   }
 
   function open({ entry, locator } = {}) {
+   try {
     // Scan the whole tree once. The target leaf already being located proves
     // every ancestor is present and expanded in the current DOM, so the loop
     // below rarely needs to click, and when it does the tree handler may rebuild
@@ -169,6 +182,9 @@
     // call only performs the normal manual-directory click and returns at once.
     label.click();
     return { clicked: true, path: [...locator.path], title: locator.path.at(-1), priorURL, selectedBefore };
+   } catch (error) {
+    return { clicked: false, reason: error?.message || '无法打开所选章节', fault: errShape(error) };
+   }
   }
 
   function rowForNodeId(nodeId) {

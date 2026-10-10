@@ -41,6 +41,39 @@ test('network interruption saves good chapters and an automatic retry resumes on
  const saved=JSON.stringify(task.pages),first=task.queue[0].key;online=true;calls=[];assert.equal(resetRetryableChapters(task),3);
   await new ImportEngine(task,io).run();assert.equal(task.status,'finished');assert.equal(calls.includes(first),false);assert.equal(Object.keys(task.pages).length,5);assert.equal(JSON.stringify({[first]:task.pages[first]}),saved);assert.equal(taskHasRetryableWork(task),false);
 });
+test('a page-side failure keeps its identity, is logged, and is stored on the task',async()=>{
+ const task=createTask(p,'IPS','1'),io=ioFor(task);io.discover=async()=>({items:links.slice(0,3)});
+ // What the injected adapter now returns instead of a bare string.
+ const failure=Object.assign(new TypeError('Illegal invocation'),{stage:'open-directory',
+   fault:{name:'TypeError',message:'Illegal invocation',stack:'TypeError: Illegal invocation\n    at locallyHidden (tree.js:143)',stage:'open-directory',chapterKey:'toc:x'}});
+ io.capture=async()=>{throw failure;};
+ const logged=[];const real=console.error;console.error=(...args)=>logged.push(args.map(String).join(' '));
+ await new ImportEngine(task,io).run();
+ console.error=real;
+ assert.equal(task.queue[0].error,'Illegal invocation','the message still reaches the user');
+ assert.equal(task.errorLog.length,3,'every failed chapter is recorded');
+ assert.equal(task.errorLog[0].name,'TypeError');
+ assert.equal(task.errorLog[0].stage,'open-directory');
+ assert.match(task.errorLog[0].stack,/tree\.js:143/);
+ assert.ok(logged.length>0,'the failure must no longer be swallowed without a console record');
+});
+test('reopening an interrupted task continues the queue without rewriting saved pages',async()=>{
+ const task=createTask(p,'IPS','1');
+ const makeIo=()=>{const io=ioFor(task);io.discover=async()=>({items:links.slice(0,5)});return io;};
+ let engine;const io1=makeIo();io1.onChange=()=>{if(Object.keys(task.pages).length===2)engine.pause();};
+ engine=new ImportEngine(task,io1);
+ await engine.run();
+ assert.equal(Object.keys(task.pages).length,2);assert.equal(task.status,'paused');
+ assert.ok(task.heartbeat?.at,'a checkpoint writes a heartbeat so a closed console can be recognised');
+ const done=task.queue.filter(c=>c.status==='captured').map(c=>c.key);
+ const saved=JSON.stringify(task.pages);
+ let calls=0;const io2=makeIo();const capture=io2.capture;io2.capture=async chapter=>{calls++;return capture(chapter);};
+ await new ImportEngine(task,io2).run();
+ assert.equal(task.status,'finished');
+ assert.equal(calls,3,'only unfinished chapters are collected again');
+ assert.equal(Object.keys(task.pages).length,5);
+ assert.equal(JSON.stringify(Object.fromEntries(done.map(key=>[key,task.pages[key]]))),saved,'already captured pages must stay unchanged');
+});
 test('a chapter that fails while being stored no longer ends the whole manual',async()=>{
  const task=createTask(p,'IPS','1'),io=ioFor(task);io.discover=async()=>({items:links.slice(0,5)});
  const real=io.save;let keyed=0;io.save=async(t,key)=>{if(key&&++keyed===2)throw new TypeError('Illegal invocation');return real(t,key);};

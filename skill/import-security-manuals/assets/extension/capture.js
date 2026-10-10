@@ -44,6 +44,12 @@
     catch { return ''; }
   }
 
+  // Only what identifies a fault crosses the chrome.scripting.executeScript()
+  // boundary: never page content, form values, cookies or credentials.
+  const errShape = e => e?.fault || ({ name: String(e?.name || 'Error'), message: String(e?.message || e || '').slice(0, 500),
+    stack: String(e?.stack || '').split('\n').slice(0, 8).join('\n').slice(0, 1200) });
+  let visibilityFaults = [];
+
   function hidden(element) {
     if (element.hasAttribute('hidden') || element.getAttribute('aria-hidden') === 'true') return true;
     const style = element.getAttribute('style') || '';
@@ -51,7 +57,12 @@
     if (activeProfile && element.ownerDocument.defaultView) {
       try { const computed = element.ownerDocument.defaultView.getComputedStyle(element);
         if (computed.display === 'none' || ['hidden', 'collapse'].includes(computed.visibility)) return true;
-      } catch { /* Detached sanitized output has no live rendering state. */ }
+      } catch (error) {
+        // A live element whose visibility cannot be determined is not proven
+        // visible, so it is excluded instead of being collected. The detached
+        // sanitized output has no layout at all and keeps the old behaviour.
+        if (element.isConnected) { visibilityFaults.push(errShape(error)); return true; }
+      }
     }
     return false;
   }
@@ -794,12 +805,13 @@
       return { signature: `${text.length}:${hash >>> 0}`, nonEmpty: Boolean(text || imageState.length), loading,
         url: displayURL(location.href, options.entry || location.href),
         auth: documents.some(({ doc, base }) => loginPage(doc, base)) };
-    } catch { return { signature: '', nonEmpty: false, error: 'invalid-content-root' }; }
+    } catch (error) { return { signature: '', nonEmpty: false, error: 'invalid-content-root', fault: errShape(error) }; }
   }
 
   async function capture(options = {}) {
     const captureStarted = Date.now();
     activeProfile = options.profile || null;
+    visibilityFaults = [];
     const document = activeProfile?.frameSelector ? globalThis.document.querySelector(activeProfile.frameSelector)?.contentDocument : globalThis.document;
     const entry = options.entry || location.href;
     const warnings = [];
@@ -891,8 +903,10 @@
       }
       result.status = 'ok';
       return result;
-    } catch {
+    } catch (error) {
       diagnostics.reason = 'capture-failed';
+      diagnostics.fault = errShape(error);
+      if (visibilityFaults.length) diagnostics.visibilityFaults = visibilityFaults.slice(0, 10);
       warnings.push('页面提取发生错误；未记录页面脚本或敏感字段，请人工检查页面结构。');
       return result;
     } finally {

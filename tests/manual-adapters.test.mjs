@@ -14,6 +14,22 @@ function setup(t, html, url=base.entry) {
 const plain=x=>JSON.parse(JSON.stringify(x));
 const linkHTML='<nav id="toc"><a href="one.html">One</a><a href="two.html">Two</a></nav><main><h1>One</h1><pre>code</pre><button>Execute API</button></main>';
 
+test('visibility that cannot be determined fails closed and reports the original error',t=>{
+  const {w,api}=setup(t,linkHTML);
+  const target=w.document.querySelector('#toc a');
+  assert.equal(target.textContent,'One');
+  // Reproduces a getComputedStyle call that rejects, e.g. a torn-down window.
+  w.getComputedStyle=()=>{throw new TypeError('Illegal invocation');};
+  const result=api.open({profile:base,chapter:{url:base.entry,title:'One',locator:{kind:'generic-toc',path:['One']}}});
+  assert.equal(result.clicked,false,'an unverifiable entry must not be opened as if it were visible');
+  assert.match(result.reason,/Illegal invocation/,'the original message must survive, not a generic one');
+  assert.equal(result.fault?.name,'TypeError');
+  assert.equal(result.fault?.message,'Illegal invocation');
+  // Plain, serializable data only: nothing here may be a DOM node or function.
+  assert.deepEqual(Object.keys(JSON.parse(JSON.stringify(result.fault))).sort(),['message','name','stack'],
+    'the fault must cross the script boundary without losing fields');
+});
+
 test('normalizes document paths and meaningful hash routes without accepting another scope',t=>{
   const {api}=setup(t,linkHTML); const p={...base,hashMode:'route',queryKeys:['lang']};
   assert.equal(api.normalizeURL('./app?lang=en#/one',p),'https://example.test/docs/app?lang=en#/one');
