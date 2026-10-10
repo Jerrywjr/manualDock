@@ -1,59 +1,39 @@
 # ManualDock
 
-Bring online device manuals and API documentation into local, searchable files.
+把在线设备手册和 API 文档带到本地，供自己查阅和 AI 检索。
 
-ManualDock is a local Chrome extension with a companion AI-agent Skill. Open a manual in a browser where you are already signed in, identify its table of contents and article area, then collect chapters into Markdown, offline HTML, JSON, and a collection report. No server, cloud account, or AI API is required.
+ManualDock 是一个本地 Chrome 扩展，附带可选的 AI-agent Skill。用户自行登录设备，工具读取手册目录与正文，逐章保存，导出 Markdown、带图片的离线 HTML、完整 JSON 和采集报告。无需服务器、云端账号或大模型接口。当前版本 **0.2.2**。
 
-[中文说明](README.zh-CN.md) · [Feature status](docs/function-status.md) · [Validation](docs/validation.md)
+[English](README.md) · [完整使用说明](使用说明.md) · [功能状态](docs/function-status.md) · [验证范围](docs/validation.md)
 
-## Install
+## 安装和采集
 
-1. Download and extract the release ZIP, or clone this repository. The current version is **0.2.2**.
-2. Open `chrome://extensions`, enable **Developer mode**, click **Load unpacked**, and select the `extension` directory. The extension is named **ManualDock**.
-3. Keep that directory in a stable location. To update an existing installation, replace its files and use Chrome's **Reload** button. Loading a different directory creates a separate extension identity and separate local progress.
+1. 下载并解压发行包，或克隆本仓库。在 Chrome 打开 `chrome://extensions`，开启开发者模式，选择“加载已解压的扩展程序”，加载 **extension** 文件夹，名称为 **ManualDock**。
+2. 自行登录设备、打开手册，点击扩展。检查自动识别的目录和正文；必要时选择目录区域、正文区域和两个不同示例章节，验证后保存规则。
+3. 填写产品和版本，点击“开始 / 继续采集”。保留手册页与控制页，检查失败和待核对项，再导出。
 
-The extension interface is currently in Chinese. The companion [Skill](skill/import-security-manuals/SKILL.md) is optional; installing it does not install or connect the Chrome extension.
+保留固定安装目录，更新时替换该目录内文件并在扩展管理页点“重新加载”。从不同路径重新加载，会得到另一套安装身份和本地进度。配套 [Skill](skill/import-security-manuals/SKILL.md) 名为 `import-security-manuals`；安装 Skill 不会自动安装扩展。
 
-## Collect a manual
+## 每三分钟自动恢复
 
-1. Sign in on the device yourself, open its manual, and click the extension's toolbar icon.
-2. Check the detected chapters and article preview. If needed, point-select the contents area, article area, and two different example chapters; validate and save the rule.
-3. Enter the product and version, then click **开始 / 继续采集** (Start / Continue). Keep both the manual and control tabs open.
-4. Inspect failed and review items before exporting. A finished queue means all discovered chapters were processed; it does **not** prove the whole manual was discovered.
+已完成章节逐章落盘。遇到可重试的网络、登录或正文加载问题后，工具等待 **3 分钟**自动尝试继续，保留已保存章节；恢复前会重新验证两章。手动点击“暂停”会取消自动继续，重复正文等待核对项不会作为网络错误无限重试。
 
-Each completed chapter is saved locally. Retryable connection, login, and loading interruptions schedule another attempt **three minutes later**. Recovery retains saved chapters and revalidates two sample chapters before continuing. The **暂停** (Pause) button cancels automatic continuation. If a session expires, sign in in the original source tab and return to its manual; ManualDock does not sign in for you. Reopening a control page can restore the saved retry schedule, but a closed control page does not execute retries. A closed source tab or revoked page access requires opening the manual and clicking the extension again.
+会话失效仍需你在原网站登录。控制页关闭时不执行重试，重新打开可恢复已保存的重试状态。原手册标签页关闭或访问授权失效时，需要在手册页重新点击扩展。浏览器休眠期间不能保证按时执行。
 
-## Optional navigation rotation
+## 根据页面识别主菜单
 
-Open the device's management interface in a **separate tab**, click the extension, and use navigation detection. ManualDock derives candidate menus from the current page's navigation structure and visible labels; it does not assume particular menu names. Inspect the proposed sequence, remove unsuitable entries, and run the trial before starting. If the page has no reliably identifiable navigation, point-select the menus yourself.
+在**独立管理标签页**点击扩展，使用导航识别。工具根据当前页面的导航结构和可见菜单内容生成候选顺序，不预设具体菜单名称。检查候选，试运行后再启动；无法可靠识别时可手动点选。
 
-Rotation is off by default and normally clicks one menu every 60 seconds. It stops when the document reloads, a target disappears, or matching becomes ambiguous. Clicking a menu does not prove the device renewed its session. ManualDock does not create or delete device objects, submit configuration, or execute API examples. Some products end sessions regardless of navigation activity.
+导航轮换默认关闭，默认每 60 秒点击一项；页面刷新、目标丢失或定位有歧义时停止。它不创建或删除设备对象，不提交配置，也不执行 API。点击成功仅证明菜单操作执行过，**不能保证设备会话续期**。
 
-## Import API specifications
+## API 规范与边界
 
-Import local Swagger 2.0 or OpenAPI 3.0/3.1 JSON/YAML, or specify a same-origin specification URL. Interfaces are organized by method and path. Internal references are resolved, circular references remain links, and missing external references are reported without fetching them. YAML parsing is bundled locally and limits alias expansion. Importing documentation never invokes its described endpoints.
+支持 Swagger 2.0、OpenAPI 3.0/3.1 的本地 JSON/YAML 文件，以及用户明确指定的同源规范地址。保留参数、请求体、响应、认证说明与示例；内部引用可解析，循环引用保留链接，外部引用报告缺失而不自动抓取。
 
-## Scope and limitations
+工具会对已发现章节去重，检查正文是否切换、正文重复、未加载分支及扫描上限；**已发现章节全部处理完，不代表整册不重不漏**。跨域 iframe、封闭组件、虚拟目录或结构变化可能需要适配。每任务最多 5,000 章。本项目测试使用模拟页面和隔离浏览器，目前不能给出其他真实设备的普遍兼容结论。
 
-- Ordinary links, query parameters, hash routes, same-URL chapter navigation, and recognizable lazy trees can use automatic detection or reusable calibration.
-- Stable chapter identifiers avoid duplicate queue entries. Repeated article bodies, unloaded branches, ambiguous nodes, and scan limits are reported for review. There is no independent authoritative directory against which to guarantee completeness.
-- The extension uses user-granted tab access. It does not read passwords, cookies, or tokens. Cross-origin frames, closed components, virtualized directories, and changed page structures may require adaptation.
-- Progress stays in the extension's local database. Export backups before clearing browser data or uninstalling. A task is limited to 5,000 chapters.
-- Automated tests use synthetic pages and isolated browser profiles. Compatibility and session renewal have not been established across other real devices.
+开发和复现命令见 [开发说明](docs/development.md)。项目代码采用 [MIT](LICENSE)，随附 YAML 解析库保留其 ISC 许可证。
 
-## Development
+可选的 [GitHub Actions 模板](https://github.com/Jerrywjr/manualdock/blob/main/ci/check.yml) 已提供。将其复制为 `.github/workflows/check.yml` 可启用自动检查；此操作需要工作流写入权限，模板默认未启用。
 
-Clone the GitHub source to develop or run tests; the install ZIP contains runtime files and usage instructions. Node.js 22 and Python 3 are used for tests and packaging; neither is needed to run the extension.
-
-```sh
-npm ci
-npx playwright install chromium
-npm test
-npm run test:browser
-npm run test:openapi:browser
-python3 scripts/package_release.py
-```
-
-See [development notes](docs/development.md) for architecture and test boundaries. Code is licensed under [MIT](LICENSE); the bundled YAML parser retains its [ISC license](extension/vendor/yaml.LICENSE.txt).
-
-An optional [GitHub Actions template](https://github.com/Jerrywjr/manualdock/blob/main/ci/check.yml) is included. Copy it to `.github/workflows/check.yml` to enable automated runs; this requires workflow-write permission. The template is not active by default.
+在线 API 文档与命令行文档都选择“在线手册”；JSON/YAML 规范文件选择“规范文件”。先检查识别结果，再采集，最后导出。识别不准时展开“手动校准”。
