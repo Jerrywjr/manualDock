@@ -61,9 +61,21 @@
     throw new Error('无法定位所选区域');
   }
   // Only what identifies a fault crosses the chrome.scripting.executeScript()
-  // boundary: never page content, form values, cookies or credentials.
-  const errShape = e => e?.fault || ({ name: String(e?.name || 'Error'), message: String(e?.message || e || '').slice(0, 500),
-    stack: String(e?.stack || '').split('\n').slice(0, 8).join('\n').slice(0, 1200) });
+  // boundary: only what identifies a fault leaves the page. Secrets in
+  // messages/stacks are stripped by redact() so credentials never reach the log.
+  const SENSITIVE_KEY = /(?:token|api[_-]?key|secret|password|passwd|pwd|access[_-]?token|refresh[_-]?token|authorization|auth|session[_-]?id|set[_-]?cookie|cookie)/i;
+  const redact = text => {
+    if (text == null) return text;
+    let s = String(text);
+    s = s.replace(/(https?:\/\/[^\s"'<>?#]+)(\?[^?\s"'<>]*)?(#[^\s"'<>]*)?/g, (m, base) => base);
+    s = s.replace(/(Authorization\s*:\s*(?:Bearer\s+)?)\S+/gi, '$1<redacted>');
+    s = s.replace(/\bBearer\s+\S+/gi, 'Bearer <redacted>');
+    s = s.replace(/(?:Set-)?Cookie\s*:\s*\S+/gi, m => m.replace(/\S+$/, '<redacted>'));
+    s = s.replace(new RegExp('(' + SENSITIVE_KEY.source + '\\s*[=:]\\s*)\\S+', 'gi'), '$1<redacted>');
+    return s;
+  };
+  const errShape = e => e?.fault || ({ name: String(e?.name || 'Error'), message: redact(String(e?.message || e || '').slice(0, 500)),
+    stack: redact(String(e?.stack || '').split('\n').slice(0, 8).join('\n')).slice(0, 1200) });
 
   function visible(el) {
     if (!el?.isConnected || !el.getClientRects().length) return false;

@@ -1,6 +1,10 @@
 import {cleanChapter,jobKey} from './profiles.js';
 import {contentHash} from './core.js';
-import {classifyRecoveryError,faultOf,pushFault} from './recovery.js';
+import {classifyRecoveryError,faultOf,pushFault,redact} from './recovery.js';
+// Guards against the same task being driven by two engine instances in one JS
+// context (e.g. a bug or a test). Cross-context exclusion is enforced by the
+// panel's per-task Web Lock (navigator.locks.request('task:<id>')).
+const runningTasks = new Set();
 export function createTask(profile,product='未知',version='未知') {
   return {schemaVersion:2,taskId:jobKey(profile,product,version),profileId:profile.id,profileRevision:profile.revision,profile,
     entry:profile.entry,sourceKind:'web',product:product||'未知',version:version||'未知',createdAt:new Date().toISOString(),updatedAt:new Date().toISOString(),
@@ -34,7 +38,9 @@ export class ImportEngine {
     await this.checkpoint();return true;
   }
   async run(){
-    if(this.running)return;this.running=true;this.paused=false;
+    if(this.running)return;
+    if(runningTasks.has(this.task.taskId))return; // same-context double-run guard
+    this.running=true;this.paused=false;runningTasks.add(this.task.taskId);
     try{
       for(const c of this.task.queue)if(['processing','waiting_login'].includes(c.status))c.status='pending';
       delete this.task.recovery;this.task.status='running';await this.checkpoint();if(!await this.scan())return;
@@ -42,9 +48,8 @@ export class ImportEngine {
       while(!this.paused){
         const chapter=this.task.queue.find(c=>c.status==='pending');if(!chapter)break;
         chapter.status='processing';delete chapter.error;delete chapter.recovery;await this.checkpoint();
-        // This catch used to keep only error.message, so the console showed a
-        // bare string and nothing was logged. Keep the structured fault and the
-        // console record so the failing frame can be identified later.
+        // Keep the structured fault and the console record so the failing frame
+        // can be identified later; do not collapse to a bare message.
         let page;try{page=await this.io.capture(chapter,this.task.profile);}catch(error){console.error('ManualDock：章节采集失败',chapter.key,error);
           const fault=faultOf(error,error?.stage||'capture-chapter',chapter);
           page={status:'error',error:error.message,code:error.code,diagnostics:{...(page?.diagnostics||{}),fault}};}
@@ -52,32 +57,53 @@ export class ImportEngine {
         const hasBody=Boolean(page.text?.trim())||(Number.isInteger(page.diagnostics?.images?.embedded)&&page.diagnostics.images.embedded>0&&/<img\b[^>]*src=["']data:image\//i.test(page.html||''));
         if(page.status!=='ok'||!hasBody||page.navigationProof?.verified!==true){
           chapter.status='failed';chapter.error=page.error||page.diagnostics?.reason||'未确认所选章节的正文加载完成';
-          chapter.recovery=classifyRecoveryError({...page,error:chapter.error});this.task.recovery={...chapter.recovery,message:chapter.error};
+          chapter.recovery=classifyRecoveryError({...page,error:chapter.error});this.task.recovery={...chapter.recovery,message:redact(chapter.error)};
           if(page.diagnostics?.fault)pushFault(this.task,page.diagnostics.fault);
           await this.checkpoint();if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}continue;
         }
         failures=0;
-        // Hashing, duplicate detection and storing were outside every try/catch,
-        // so one failure there ended the whole manual. Keep already saved pages
-        // and record a failed chapter instead.
+        // Compute the hash and the page record first; only then commit it to
+        // memory and persist together. A storage failure must NOT leave the
+        // chapter marked captured and must stop the run rather than keep
+        // collecting on storage we could not confirm.
+        let hash, duplicate, record;
         try{
-        const hash=await contentHash(page.text?.trim()?page.text:page.html);
-        const duplicate=Object.entries(this.task.pages).find(([key,p])=>key!==chapter.key&&p.hash===hash);
-        chapter.status=duplicate?'review':'captured';
-        if(duplicate)chapter.error='正文与其他章节相同，已保留，待核对';
-        this.task.pages[chapter.key]={...page,key:chapter.key,hash,capturedAt:new Date().toISOString()};
-        await this.checkpoint(chapter.key);
+          hash=await contentHash(page.text?.trim()?page.text:page.html);
+          duplicate=Object.entries(this.task.pages).find(([key,p])=>key!==chapter.key&&p.hash===hash);
+          chapter.status=duplicate?'review':'captured';
+          if(duplicate)chapter.error='正文与其他章节相同，已保留，待核对';
+          record={...page,key:chapter.key,hash,capturedAt:new Date().toISOString()};
         }catch(error){
-          console.error('ManualDock：章节保存失败',chapter.key,error);
-          chapter.status='failed';chapter.error=error?.message||'章节保存失败';
-          chapter.recovery=classifyRecoveryError(error);this.task.recovery={...chapter.recovery,message:chapter.error};
-          try{await this.checkpoint();}catch(saveError){console.warn('ManualDock：记录失败章节未完成存档。',saveError);}
-          if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}
-          continue;
+          console.error('ManualDock：章节处理失败',chapter.key,error);
+          chapter.status='failed';chapter.error=error?.message||'章节处理失败';
+          chapter.recovery=classifyRecoveryError(error);this.task.recovery={...chapter.recovery,message:redact(chapter.error)};
+          await this.checkpoint();if(++failures>=3){this.paused=true;this.task.discoveryWarnings.push('连续三章失败，已暂停；可恢复的连接错误将按自动恢复设置重试，其他错误需要检查规则');}continue;
+        }
+        try{
+          this.task.pages[chapter.key]=record;
+          await this.checkpoint(chapter.key);
+        }catch(error){
+          // Storage failed: revert the in-memory record so a later successful
+          // checkpoint cannot persist a body for a chapter that was never saved,
+          // then stop the run and wait for recovery (do NOT mark it captured).
+          delete this.task.pages[chapter.key];
+          chapter.status='failed';
+          const cause=redact(error?.message||'');
+          chapter.error=cause?`${cause}（章节存档失败，已停止采集，等待恢复）`:'章节存档失败，已停止采集，等待恢复';
+          this.task.recovery={retryable:false,reason:'storage',message:chapter.error};
+          this.paused=true;
+          console.error('ManualDock：章节存档失败，停止采集',chapter.key,error);
+          await this.checkpoint().catch(e=>console.warn('ManualDock：记录存档失败未完成。',e));
+          break;
         }
       }
-      this.task.status=this.paused?'paused':'finished';await this.checkpoint();
-    }catch(error){console.error('ManualDock：采集中断',error);this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:error.message,stack:String(error?.stack||'').slice(0,4000)};await this.checkpoint();throw error;}
-    finally{this.running=false;}
+      // The whole task is only finished when nothing is left pending, processing,
+      // waiting for login, or failed. Otherwise report it as still incomplete.
+      const blocked=this.task.queue.some(c=>['pending','processing','waiting_login'].includes(c.status));
+      const hasFailed=this.task.queue.some(c=>c.status==='failed');
+      this.task.status=(this.paused||blocked||hasFailed)?'paused':'finished';
+      await this.checkpoint();
+    }catch(error){console.error('ManualDock：采集中断',error);this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:redact(error.message),stack:String(error?.stack||'').slice(0,4000)};await this.checkpoint();throw error;}
+    finally{this.running=false;runningTasks.delete(this.task.taskId);}
   }
 }

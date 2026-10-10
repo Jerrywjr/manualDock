@@ -1,5 +1,5 @@
 import test from 'node:test';import assert from 'node:assert/strict';import {readFile} from 'node:fs/promises';import {JSDOM} from 'jsdom';
-import * as profiles from '../extension/profiles.js';import * as recovery from '../extension/recovery.js';import {AutoRetryClock} from '../extension/auto-retry.js';import {createTask,ImportEngine} from '../extension/engine.js';import {buildExports,contentHash} from '../extension/core.js';import {parseSpecification} from '../extension/openapi.js';
+import * as profiles from '../extension/profiles.js';import * as recovery from '../extension/recovery.js';import {AutoRetryClock} from '../extension/auto-retry.js';import {createTask,ImportEngine} from '../extension/engine.js';import {buildExports,contentHash} from '../extension/core.js';import {parseSpecification} from '../extension/openapi.js';import * as bindCheck from '../extension/bind-check.js';
 const html=await readFile(new URL('../extension/panel.html',import.meta.url),'utf8');
 const source=(await readFile(new URL('../extension/panel.js',import.meta.url),'utf8')).replace(/^import .*$/gm,'');
 const flush=()=>new Promise(r=>setImmediate(r));
@@ -14,7 +14,7 @@ async function setup(t,{holdTab=false,savedProfiles=[],savedTasks=[],currentURL=
   capture:async(c,p)=>{if(state.captureError)throw new Error(state.captureError);state.captured.push(clone(p));return{status:'ok',url:c.url,text:'body '+c.title,navigationProof:{verified:true},warnings:[],diagnostics:{}};},
   verifySamples:async p=>{if(state.verifyError)throw new Error(state.verifyError);state.verified.push(clone(p));return{verified:true,previews:state.verificationPreviews||p.samples.map(c=>({title:c.title,text:'body '+c.title}))};}};
  function serializable(value){if(value===undefined)throw new Error('Value is unserializable');if(value&&typeof value==='object')Object.values(value).forEach(serializable);}
- Object.assign(w,profiles,recovery,{AutoRetryClock,createTask,ImportEngine,buildExports,contentHash,parseSpecification,createBrowserIO:()=>io,Blob,
+ Object.assign(w,profiles,recovery,bindCheck,{AutoRetryClock,createTask,ImportEngine,buildExports,contentHash,parseSpecification,createBrowserIO:()=>io,Blob,
   loadProfiles:async()=>clone(savedProfiles),saveProfile:async p=>{state.savedProfile=clone(p);},loadTask:async id=>disk.has(id)?clone(disk.get(id)):null,listTasks:async()=>[...disk.values()],saveTask:async task=>disk.set(task.taskId,clone(task)),saveWholeTask:async task=>disk.set(task.taskId,clone(task)),setSetting:async(key,value)=>settings.set(key,clone(value)),getSetting:async key=>settings.get(key)||null,
   listSettings:async()=>[...settings.keys()],deleteSetting:async key=>{settings.delete(key);},deleteTask:async id=>{disk.delete(id);},
   chrome:{tabs:{getCurrent:async()=>({id:2}),update:async()=>{}},scripting:{executeScript:async options=>{

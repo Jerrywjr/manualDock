@@ -51,3 +51,31 @@ test('a permanent current preflight failure stops retries even when an earlier c
  const task={sourceKind:'web',recovery:{retryable:false,reason:'intervention'},queue:[{status:'failed',recovery:{retryable:true,reason:'network'}},{status:'pending'}]};
  assert.equal(taskHasRetryableWork(task),false);
 });
+
+test('faultOf redacts credentials from message and stack while keeping identity',()=>{
+ const error=new Error('GET https://docs.example.com/api/toc?token=SECRETTOKEN&api_key=AK123 failed: Authorization: Bearer eyJabc.def.ghi ; Cookie: sess=XYZ');
+ error.stack='Error: boom\n    at load (https://docs.example.com/api/toc?token=SECRETTOKEN#frag:1:1)\n    at x (https://docs.example.com/p?password=supersecret:2:2)';
+ const fault=faultOf(error,'capture-chapter',{key:'k1',title:'T1'});
+ assert.equal(fault.name,'Error');
+ assert.equal(fault.stage,'capture-chapter');
+ assert.equal(fault.chapterKey,'k1');
+ assert.equal(fault.chapterTitle,'T1');
+ for(const secret of ['SECRETTOKEN','AK123','eyJabc','sess=XYZ','supersecret'])assert.ok(!fault.message.includes(secret)&&!fault.stack.includes(secret),'leaked '+secret);
+ // path is kept, query string / fragment (where tokens live) is dropped
+ assert.ok(fault.message.includes('https://docs.example.com/api/toc'));
+ assert.ok(!fault.message.includes('?token'));
+ assert.ok(!fault.stack.includes('?token'));
+});
+
+test('pushFault redacts a raw fault object before it reaches the stored log',()=>{
+ const task={};
+ pushFault(task,{name:'Error',message:'token=ABC123',stack:'at y?token=ABC123'});
+ assert.equal(task.errorLog[0].message,'token=<redacted>');
+ assert.ok(!task.errorLog[0].stack.includes('ABC123'),'stack leaked token');
+});
+
+test('classifyRecoveryError redacts the stored recovery message',()=>{
+ const r=classifyRecoveryError(new Error('fetch https://h?api_key=ZZZ failed'));
+ assert.ok(!r.message.includes('ZZZ'));
+ assert.ok(r.message.includes('https://h'));
+});

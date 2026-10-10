@@ -74,14 +74,17 @@ test('reopening an interrupted task continues the queue without rewriting saved 
  assert.equal(Object.keys(task.pages).length,5);
  assert.equal(JSON.stringify(Object.fromEntries(done.map(key=>[key,task.pages[key]]))),saved,'already captured pages must stay unchanged');
 });
-test('a chapter that fails while being stored no longer ends the whole manual',async()=>{
+test('a chapter whose page cannot be stored stops the run without corrupting saved data',async()=>{
  const task=createTask(p,'IPS','1'),io=ioFor(task);io.discover=async()=>({items:links.slice(0,5)});
  const real=io.save;let keyed=0;io.save=async(t,key)=>{if(key&&++keyed===2)throw new TypeError('Illegal invocation');return real(t,key);};
  await new ImportEngine(task,io).run();
- assert.equal(task.status,'finished');
- assert.equal(task.queue.filter(c=>c.status==='captured').length,4);
- assert.equal(task.queue.filter(c=>c.status==='failed').length,1);
- assert.match(task.queue.find(c=>c.status==='failed').error,/Illegal invocation/);
+ assert.equal(task.status,'paused','storage failure must stop the run and wait for recovery, not finish');
+ assert.equal(task.queue.filter(c=>c.status==='captured').length,1,'only chapters saved before the failure stay captured');
+ assert.equal(task.queue.filter(c=>c.status==='failed').length,1,'the chapter that could not be stored is marked failed, never captured');
+ const failed=task.queue.find(c=>c.status==='failed');
+ assert.match(failed.error,/Illegal invocation/,'the storage error is surfaced to the user');
+ assert.equal(task.recovery.reason,'storage');
+ assert.equal(taskHasRetryableWork(task),false,'a storage failure is not silently retried');
 });
 test('a transient discovery failure is recoverable before the first chapter has been found',async()=>{
  const task=createTask(p),io=ioFor(task);io.discover=async()=>{throw new Error('net::ERR_CONNECTION_RESET');};

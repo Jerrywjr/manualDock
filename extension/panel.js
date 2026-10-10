@@ -1,4 +1,6 @@
 import {validateProfile,cleanChapter,jobKey,exportProfile,normalizeDocumentURL,reviseProfile,bindProfile,specificationURL,specificationTaskId,selectSavedProfile} from './profiles.js';
+import {classifyBind} from './bind-check.js';
+import {redact} from './recovery.js';
 import {createTask,ImportEngine} from './engine.js';
 import {createBrowserIO} from './browser-io.js';
 import {saveTask,saveWholeTask,loadTask,listTasks,saveProfile,loadProfiles,setSetting,getSetting,listSettings,deleteSetting,deleteTask} from './task-store.js';
@@ -142,7 +144,7 @@ async function run(retry=false,{automatic=false,expectedTaskId=null,expectedAtte
     for(const c of task.queue)if(c.status==='failed'){c.status='pending';delete c.error;delete c.recovery;}
     if(reviews.length&&confirm(`有 ${reviews.length} 个「待核对」章节。继续会用新采集的内容替换已保存的原文，原有正文不再保留。\n\n确认重新采集这些章节？`))for(const c of reviews){c.status='pending';delete c.error;delete c.recovery;}}
    engine=new ImportEngine(task,{discover:io.discover,capture:io.capture,save:saveTask,onChange:render});await engine.run();
-  }catch(e){task.recovery={...classifyRecoveryError(e),message:e.message};task.status=task.recovery.reason==='auth'?'waiting_login':'paused';error(e);}
+  }catch(e){task.recovery={...classifyRecoveryError(e),message:redact(e.message)};task.status=task.recovery.reason==='auth'?'waiting_login':'paused';error(e);}
   finally{
    const again=generation===runGeneration&&taskHasRetryableWork(task);
    task.autoRecovery={...task.autoRecovery,enabled:again,nextAttemptAt:again?Date.now()+RETRY_INTERVAL_MS:null};
@@ -170,17 +172,12 @@ function ago(value){const time=Date.parse(value||0);if(!Number.isFinite(time))re
  const minutes=Math.round((Date.now()-time)/60000);
  if(minutes<1)return '刚刚';if(minutes<60)return minutes+' 分钟前';
  const hours=Math.round(minutes/60);if(hours<24)return hours+' 小时前';return Math.round(hours/24)+' 天前';}
-const loginURL=url=>{try{return /\/(?:login|logon|signin|sign-in|sso)(?:[./_-]|$)/i.test(new URL(url).pathname);}catch{return false;}};
 /** Prove the current tab really serves this task before binding: scope, login
  *  state and the saved calibration rule, never origin equality alone. */
 async function checkBind(profile,task){
- if(!profile)return {ok:false,reason:'该任务没有可用的识别规则，请重新识别'};
  let current;try{current=await io.tab();}catch(error){return {ok:false,reason:error.message};}
- if(!current?.url)return {ok:false,reason:'无法读取当前标签页地址，请从手册页点击扩展'};
- let address;try{address=new URL(current.url);}catch{return {ok:false,reason:'当前标签页地址无效'};}
- if(address.origin!==profile.origin)return {ok:false,reason:`请在手册来源 ${profile.origin} 的标签页点击扩展后再绑定（当前是 ${address.origin}）`};
- if(loginURL(address.href))return {ok:false,reason:'当前页面是登录页，请先登录并打开手册章节页'};
- if(!normalizeDocumentURL(address.href,profile))return {ok:false,reason:'当前页面不在该手册范围内（路径前缀或查询参数不符），请打开手册章节页'};
+ const pre=classifyBind(profile,current?.url);
+ if(!pre.ok)return pre;
  try{
   await io.install();
   const r=await chrome.scripting.executeScript({target:{tabId},args:[profile],func:profile=>{
