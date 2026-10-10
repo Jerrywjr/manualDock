@@ -28,7 +28,7 @@ async function setup(t,{holdTab=false,savedProfiles=[],savedTasks=[],currentURL=
   }}}});
  w.navigator.locks={request:async(name,_options,callback)=>{if(held.has(name))return callback(null);held.add(name);try{return await callback({name});}finally{held.delete(name);}}};
  w.URL.createObjectURL=()=> 'blob:test';w.URL.revokeObjectURL=()=>{};w.HTMLAnchorElement.prototype.click=()=>{};w.setInterval=()=>0;
- w.eval(source+'\n;globalThis.TestPanel={render,detect,checkBind,openTask,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
+ w.eval(source+'\n;globalThis.TestPanel={render,error,detect,checkBind,openTask,retryAutomatically,pauseImport,retryClock,previewCurrent,importSpec,scan,run,sample,verifyAndSave,rotationAction,rotationTrial,rotationCall,getTask:()=>task,getProfile:()=>profile,setRotation:value=>{rotationConfig=value;rotationVerified=false;showRotationTargets();},getRotationVerified:()=>rotationVerified};');
  return{w,document:w.document,state,disk,held,api:w.TestPanel,releaseTab,settle:async()=>{for(let i=0;i<15;i++)await flush();}};
 }
 test('panel web actions remain gated until initialization finishes',async t=>{
@@ -253,4 +253,24 @@ test('a saved task from another origin stays listed and selectable, and a stale 
  open.click();await p.settle();
  assert.match(p.document.getElementById('error').textContent,/other\.test/,'binding is refused with the reason, not silently matched by origin');
  assert.equal(p.api.getTask().taskId,'foreign-task','the task is still loaded so the user can switch tabs and retry');
+});
+test('an error shown in the console never carries a credential from the message',async t=>{
+ const p=await setup(t);await p.settle();
+ p.api.error(new Error('GET https://docs.test/api/toc?token=SECRETTOKEN failed: Authorization: Bearer eyJabc.def ; Cookie: sess=XYZ'));
+ const shown=p.document.getElementById('error').textContent;
+ assert.ok(!shown.includes('SECRETTOKEN'),'token leaked into the console: '+shown);
+ assert.ok(!shown.includes('eyJabc'),'bearer credential leaked into the console: '+shown);
+ assert.ok(!shown.includes('sess=XYZ'),'cookie leaked into the console: '+shown);
+ assert.match(shown,/docs\.test\/api/,'the path is still shown for diagnosis');
+});
+test('the stored error log is redacted again when it is rendered',async t=>{
+ const p=await setup(t);await p.settle();
+ await p.api.run();
+ const task=p.api.getTask();
+ task.errorLog=[{name:'Error',message:'token=RAWSECRET',stack:'at f (https://docs.test/api?token=RAWSECRET)',stage:'capture-chapter',chapterTitle:'C1',at:new Date().toISOString()}];
+ task.queue[0].status='failed';
+ p.api.render();
+ const shown=p.document.getElementById('error-log').textContent;
+ assert.ok(!shown.includes('RAWSECRET'),'a raw fault rendered without redaction: '+shown);
+ assert.match(shown,/C1/,'the chapter identity is still shown');
 });

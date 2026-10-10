@@ -103,7 +103,7 @@ export class ImportEngine {
       const hasFailed=this.task.queue.some(c=>c.status==='failed');
       this.task.status=(this.paused||blocked||hasFailed)?'paused':'finished';
       await this.checkpoint();
-    }catch(error){console.error('ManualDock：采集中断',error);this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:redact(error.message),stack:String(error?.stack||'').slice(0,4000)};await this.checkpoint();throw error;}
+    }catch(error){console.error('ManualDock：采集中断',error);this.task.status='paused';this.task.recovery={...classifyRecoveryError(error),message:redact(error.message),stack:redact(String(error?.stack||'')).slice(0,4000)};await this.checkpoint();throw error;}
     finally{this.running=false;runningTasks.delete(this.task.taskId);}
   }
 }

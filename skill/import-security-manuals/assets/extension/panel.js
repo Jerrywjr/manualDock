@@ -16,7 +16,9 @@ const retryClock=new AutoRetryClock({getTask:()=>task?.autoRecovery?.sourceTabId
 const labels={retry_wait:'等待自动重试',ready:'准备就绪',running:'正在采集',paused:'已暂停',waiting_login:'等待重新登录',finished:'已处理当前发现的章节',pending:'待处理',processing:'读取中',captured:'已采集',review:'待核对',failed:'失败'};
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 function showMode(value){if(mode==='web'&&value!=='web'&&task?.sourceKind==='web')lastWebTask=task;if(value==='web'&&!busy&&task?.sourceKind==='openapi'&&lastWebTask?.profileId===profile?.id){task=lastWebTask;$('product').value=task.product;$('version').value=task.version;render();refreshRetryClock();}mode=value;document.querySelectorAll('[data-panel]').forEach(el=>el.hidden=el.dataset.panel!==value);document.querySelectorAll('[data-mode]').forEach(el=>{if(el.dataset.mode===value)el.setAttribute('aria-current','page');else el.removeAttribute('aria-current');});$('document-meta').hidden=!['web','spec'].includes(value);$('export-step').hidden=value!=='web';}
-function error(e){$('error').textContent=e.message||String(e);$('error').hidden=false;}
+// Every message shown in the console goes through redact(): a URL token or an
+// Authorization header carried in an exception must never reach the UI.
+function error(e){$('error').textContent=redact(e.message||String(e));$('error').hidden=false;}
 function previewText(page){
  const note=label=>'[图片：'+(label?.trim()||'未命名图片')+'，导出离线HTML可查看]';
  return String(page.markdown||page.text||'')
@@ -235,7 +237,9 @@ function renderErrorLog(){
  $('error-log').textContent=log?log.map(entry=>{
   const when=entry.at?new Date(entry.at).toLocaleString():'未知时间';
   const where=[entry.stage,entry.chapterTitle].filter(Boolean).join(' · ')||'未标注阶段';
-  return `${when}  ${where}\n  ${entry.name}: ${entry.message}\n  ${String(entry.stack||'').split('\n')[0]||''}`;
+  // Redact again on display: entries normally arrive through pushFault, but this
+  // keeps the log safe even if a fault was ever written without it.
+  return `${when}  ${where}\n  ${entry.name}: ${redact(String(entry.message||''))}\n  ${redact(String(entry.stack||'')).split('\n')[0]||''}`;
  }).join('\n\n'):'暂无记录';
 }
 async function library(){
@@ -360,5 +364,5 @@ async function initialize(){
  else if(selected.status==='ambiguous'){profileSelectionRequired=true;$('profile-status').textContent='多份已保存规则或任务均匹配，无法确定最近使用项；请从列表明确选择已保存规则';}
  else{await locked(detect,{initialization:true});}
  rotationPoll=setInterval(()=>{if(mode==='rotation'&&!busy&&!rotationBusy)rotationCall('snapshot').catch(e=>{$('rotation-status').textContent='状态未知：'+e.message;});},3000);
- }catch(e){error(e);$('connection').textContent=e.message;}finally{initialized=Boolean(sourceOrigin);try{await restoreRetryDeadline();await markInterrupted();}catch(e){error(e);}render();}}
+ }catch(e){error(e);$('connection').textContent=redact(e.message);}finally{initialized=Boolean(sourceOrigin);try{await restoreRetryDeadline();await markInterrupted();}catch(e){error(e);}render();}}
 render();initialize();

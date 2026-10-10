@@ -101,3 +101,11 @@ test('an invalid directory is not silently ignored when an older queue already e
  io.discover=async()=>({items:[],warnings:['目录定位器失效'],diagnostics:{reason:'invalid-directory'}});io.capture=async()=>{captures++;throw new Error('must not run');};
  await assert.rejects(new ImportEngine(task,io).run(),/目录定位器失效/);assert.equal(captures,0);assert.equal(task.recovery.retryable,false);
 });
+test('an interruption keeps the stack for diagnosis but stores it redacted',async()=>{
+ const task=createTask(p,'IPS','1'),io=ioFor(task);
+ io.discover=async()=>{throw Object.assign(new Error('boom'),{stack:'Error: boom\n    at load (https://docs.test/api?token=SECRETTOKEN:1:1)'});};
+ await assert.rejects(new ImportEngine(task,io).run(),/boom/);
+ assert.ok(task.recovery.stack,'the stack is still stored so the failing frame can be identified');
+ assert.ok(!task.recovery.stack.includes('SECRETTOKEN'),'a token in a stack frame leaked into the task');
+ assert.match(task.recovery.stack,/docs\.test\/api/,'the path is kept for diagnosis');
+});

@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
 import {RETRY_INTERVAL_MS,classifyRecoveryError,resetRetryableChapters,taskHasRetryableWork,faultOf,pushFault} from '../extension/recovery.js';
 
 test('a fault keeps its identity and stage, carries no page content, and survives the script boundary',()=>{
@@ -78,4 +79,21 @@ test('classifyRecoveryError redacts the stored recovery message',()=>{
  const r=classifyRecoveryError(new Error('fetch https://h?api_key=ZZZ failed'));
  assert.ok(!r.message.includes('ZZZ'));
  assert.ok(r.message.includes('https://h'));
+});
+
+// redact() has to be duplicated: recovery.js is an ES module while capture.js,
+// tree.js and manual-adapters.js are IIFE content scripts that cannot import it.
+// This keeps the four copies from drifting apart.
+test('every copy of redact() is identical so one cannot silently drift from the others',async()=>{
+ const files=['recovery.js','capture.js','tree.js','manual-adapters.js'];
+ const normalize=async name=>{
+  const src=await readFile(new URL(`../extension/${name}`,import.meta.url),'utf8');
+  const key=src.match(/const SENSITIVE_KEY = .*/)[0].replace(/^\s+/,'');
+  const steps=[...src.matchAll(/s = s\.replace\(.*/g)].map(m=>m[0].replace(/^\s+/,''));
+  assert.equal(steps.length,5,name+' must keep exactly the five redaction steps');
+  return key+'\n'+steps.join('\n');
+ };
+ const texts=await Promise.all(files.map(normalize));
+ for(const text of texts.slice(1))assert.equal(text,texts[0],'a redact() copy drifted from recovery.js');
+ assert.match(texts[0],/\[\^\\s"'<>\?#\]\+/, 'the URL base must exclude ? and # so query strings are stripped');
 });
