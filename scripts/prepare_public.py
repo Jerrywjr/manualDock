@@ -13,27 +13,21 @@ import tempfile
 from package_release import RUNTIME, PUBLIC_DOCS, SKILL_FILES, SKILL_ROOT, checked_path, check_public_content
 
 PUBLIC_TESTS = (
-    'archive.test.mjs', 'auto-retry.test.mjs', 'background.test.mjs',
-    'browser-io.test.mjs', 'capture.test.mjs', 'core.test.mjs',
-    'engine.test.mjs', 'generic-capture.test.mjs', 'integration-panel.test.mjs',
+    'library-view.test.mjs', 'library-layout.browser.mjs', 'background-runtime.test.mjs', 'runtime-client.test.mjs', 'runtime.browser.mjs', 'recognition.browser.mjs',
+    'source-connector.test.mjs', 'source-controls.test.mjs', 'archive-restore.test.mjs', 'batch.test.mjs', 'session.test.mjs', 'task-store.test.mjs', 'panel-bind.test.mjs', 'archive.test.mjs', 'auto-retry.test.mjs', 'background.test.mjs',
+    'browser-io.test.mjs', 'capture.test.mjs', 'capture-disclosures.test.mjs', 'content-preparation.test.mjs', 'core.test.mjs',
+    'engine-recovery.chromium.mjs', 'engine-recovery.integration.mjs', 'engine.test.mjs', 'generic-capture.test.mjs', 'integration-panel.test.mjs',
     'integration-profiles.test.mjs', 'manual-adapters.test.mjs',
-    'navigation-discovery.test.mjs', 'navigation-rotation.test.mjs',
+    'directory-scan.test.mjs', 'navigation-discovery.test.mjs', 'navigation-rotation.test.mjs', 'rotation-controller.test.mjs',
     'openapi.test.mjs', 'profiles.test.mjs', 'recovery.test.mjs',
     'universal-archive.test.mjs', 'universal-export.test.mjs',
-    'universal.browser.integration.mjs',
+    'universal.browser.integration.mjs', 'layout.browser.mjs', 'workspace.browser.mjs', 'scan-workspace.browser.mjs',
 )
 SOURCE_FILES = (
-    '.gitignore', 'ci/check.yml', 'package.json', 'package-lock.json',
-    'scripts/build-openapi-vendor.mjs', 'scripts/package_release.py',
-    'scripts/prepare_public.py',
+    '.gitignore', '.prettierignore', '.prettierrc.json', '.editorconfig', 'CONTRIBUTING.md', 'ci/check.yml', 'package.json', 'package-lock.json',
+    'scripts/build-openapi-vendor.mjs', 'scripts/package_release.py', 'scripts/sync-assets.mjs', 'scripts/check-source.mjs',
+    'scripts/prepare_public.py', 'scripts/check-handoff.mjs',
 )
-PUBLIC_SCRIPTS = {
-    'test': 'node --test tests/*.test.mjs',
-    'build:openapi': 'node scripts/build-openapi-vendor.mjs',
-    'test:openapi': 'node --test tests/openapi.test.mjs',
-    'test:openapi:browser': 'OPENAPI_BROWSER=1 node --test tests/openapi.test.mjs',
-    'test:browser': 'node tests/universal.browser.integration.mjs',
-}
 MARKER = '.manualdock-export.json'
 
 
@@ -54,8 +48,7 @@ def collect(source):
     package = json.loads(payload['package.json'])
     if package.get('name') != 'manualdock' or package.get('version') != manifest['version']:
         raise ValueError('Package name/version must match the ManualDock manifest')
-    removed_scripts = sorted(set(package.get('scripts', {})) - set(PUBLIC_SCRIPTS))
-    package['scripts'] = PUBLIC_SCRIPTS
+    removed_scripts = []
     payload['package.json'] = (json.dumps(package, indent=2, ensure_ascii=False) + '\n').encode()
     lock = json.loads(payload['package-lock.json'])
     if lock.get('name') != package['name'] or lock.get('version') != package['version']:
@@ -139,10 +132,15 @@ def export(source, destination, refresh=False):
 if __name__ == '__main__':
     root = Path(__file__).resolve().parent.parent
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check', action='store_true', help='Validate public inputs without writing an export')
     parser.add_argument('--destination', type=Path, default=root.parent / 'manualdock')
     parser.add_argument('--refresh', action='store_true', help='Update an earlier generated source export')
     args = parser.parse_args()
     try:
-        print(json.dumps(export(root, args.destination, args.refresh), indent=2))
+        if args.check:
+            payload, _ = collect(root)
+            print(json.dumps({'checkedFiles': len(payload), 'written': False}))
+        else:
+            print(json.dumps(export(root, args.destination, args.refresh), indent=2))
     except (ValueError, OSError, UnicodeError) as error:
         sys.exit(str(error))

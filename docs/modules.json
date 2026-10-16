@@ -1,0 +1,209 @@
+{
+  "schemaVersion": 1,
+  "modules": [
+    {
+      "id": "ui",
+      "title": "界面与资料库展示",
+      "files": [
+        "panel.js",
+        "panel.html",
+        "panel.css",
+        "library-view.js"
+      ],
+      "dependsOn": [
+        "collection",
+        "connection",
+        "identity",
+        "runtime",
+        "session",
+        "spec",
+        "storage"
+      ],
+      "boundary": "控制页草稿、栏目、分页；不持有后台任务生命周期。library-view 只渲染并回调，不读写数据库。",
+      "tests": [
+        "tests/integration-panel.test.mjs",
+        "tests/library-layout.browser.mjs"
+      ]
+    },
+    {
+      "id": "connection",
+      "title": "来源连接",
+      "files": [
+        "source-controls.js",
+        "source-connector.js",
+        "batch.js"
+      ],
+      "dependsOn": [
+        "session",
+        "storage"
+      ],
+      "boundary": "URL 授权、已有标签复用、来源选择；移除连接不得删除档案。",
+      "tests": [
+        "tests/source-connector.test.mjs",
+        "tests/source-controls.test.mjs",
+        "tests/batch.test.mjs"
+      ]
+    },
+    {
+      "id": "runtime",
+      "title": "后台入口与通信",
+      "files": [
+        "manifest.json",
+        "background.js",
+        "background-runtime.js",
+        "runtime-client.js"
+      ],
+      "dependsOn": [
+        "identity",
+        "rotation",
+        "session",
+        "storage"
+      ],
+      "boundary": "后台拥有来源注册与恢复绑定；控制页只订阅快照、发送命令。",
+      "tests": [
+        "tests/background-runtime.test.mjs",
+        "tests/runtime-client.test.mjs",
+        "tests/runtime.browser.mjs"
+      ]
+    },
+    {
+      "id": "session",
+      "title": "来源会话与恢复",
+      "files": [
+        "session.js",
+        "auto-retry.js",
+        "recovery.js"
+      ],
+      "dependsOn": [
+        "collection",
+        "identity",
+        "storage"
+      ],
+      "boundary": "每来源独立状态、取消、重试与任务锁；用户暂停不得触发自动续采。",
+      "tests": [
+        "tests/session.test.mjs",
+        "tests/auto-retry.test.mjs",
+        "tests/recovery.test.mjs"
+      ]
+    },
+    {
+      "id": "collection",
+      "title": "采集队列与浏览器操作",
+      "files": [
+        "engine.js",
+        "browser-io.js"
+      ],
+      "dependsOn": [
+        "identity",
+        "session"
+      ],
+      "boundary": "队列推进、逐章检查点；先确认章节，再展开正文，重新稳定后保存；不得伪造成功。",
+      "tests": [
+        "tests/engine.test.mjs",
+        "tests/browser-io.test.mjs",
+        "tests/content-preparation.test.mjs"
+      ]
+    },
+    {
+      "id": "page",
+      "title": "来源页目录与正文",
+      "files": [
+        "tree.js",
+        "manual-adapters.js",
+        "capture.js"
+      ],
+      "dependsOn": [],
+      "boundary": "注入来源页的经典脚本；目录树与正文参数树分离，限定校准区域，清理危险 HTML。",
+      "tests": [
+        "tests/capture-disclosures.test.mjs",
+        "tests/directory-scan.test.mjs",
+        "tests/manual-adapters.test.mjs",
+        "tests/generic-capture.test.mjs"
+      ]
+    },
+    {
+      "id": "identity",
+      "title": "身份与配置",
+      "files": [
+        "core.js",
+        "sangfor-rules.js",
+        "profiles.js",
+        "bind-check.js"
+      ],
+      "dependsOn": [
+        "export"
+      ],
+      "boundary": "URL、章节键、校准身份与哈希；core 保留历史导出入口转发，避免破坏调用方。",
+      "tests": [
+        "tests/core.test.mjs",
+        "tests/profiles.test.mjs",
+        "tests/panel-bind.test.mjs"
+      ]
+    },
+    {
+      "id": "storage",
+      "title": "数据库与档案恢复",
+      "files": [
+        "task-store.js",
+        "archive.js"
+      ],
+      "dependsOn": [
+        "identity",
+        "session"
+      ],
+      "boundary": "IndexedDB 持久状态、修订和删除标记；恢复不能覆盖本机冲突正文。",
+      "tests": [
+        "tests/task-store.test.mjs",
+        "tests/archive-restore.test.mjs",
+        "tests/universal-archive.test.mjs"
+      ]
+    },
+    {
+      "id": "export",
+      "title": "离线导出",
+      "files": [
+        "exports.js"
+      ],
+      "dependsOn": [
+        "identity"
+      ],
+      "boundary": "只把已经清理的保存数据转为四种字符串；不访问网页，不补造缺失正文，不写任务。",
+      "tests": [
+        "tests/core.test.mjs",
+        "tests/universal-export.test.mjs"
+      ]
+    },
+    {
+      "id": "spec",
+      "title": "规范文件解析",
+      "files": [
+        "openapi.js",
+        "vendor/yaml.js",
+        "vendor/yaml.LICENSE.txt"
+      ],
+      "dependsOn": [],
+      "boundary": "本地 JSON/YAML 解析；不执行接口，不自动获取外部引用。",
+      "tests": [
+        "tests/openapi.test.mjs"
+      ]
+    },
+    {
+      "id": "rotation",
+      "title": "菜单轮换",
+      "files": [
+        "rotation-controller.js",
+        "navigation-discovery.js",
+        "navigation-rotation.js"
+      ],
+      "dependsOn": [
+        "session"
+      ],
+      "boundary": "后台调度与来源页导航独立；试运行证明必须对应所选配置，不能混入文档采集。",
+      "tests": [
+        "tests/rotation-controller.test.mjs",
+        "tests/navigation-rotation.test.mjs",
+        "tests/navigation-discovery.test.mjs"
+      ]
+    }
+  ]
+}

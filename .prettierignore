@@ -1,0 +1,8 @@
+node_modules/
+internal/
+extension/vendor/
+skill/import-security-manuals/assets/
+package-lock.json
+docs/*.json
+docs/*.png
+.workbuddy/

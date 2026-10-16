@@ -1,6 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeURL, mergeLinks, contentHash, buildExports } from '../extension/core.js';
+import {
+  normalizeURL,
+  mergeLinks,
+  contentHash,
+  buildExports,
+  hasMissingExamples,
+} from '../extension/core.js';
 
 const entry = 'https://manual.example.test/adocs.php';
 const chapter = `${entry}?index=1&dataID=setup`;
@@ -10,21 +16,39 @@ const pending = `${entry}?index=4&dataID=later`;
 
 // Removing the query allowlist, pair rule, or origin/path check must fail these cases.
 test('normalizeURL accepts only the manual root and complete chapter identities', () => {
-  for (const raw of [entry, '/adocs.php', './adocs.php']) assert.equal(normalizeURL(raw, entry), entry);
-  assert.equal(normalizeURL('?dataID=part_A-9&index=001#example', entry), `${entry}?index=1&dataID=part_A-9`);
+  for (const raw of [entry, '/adocs.php', './adocs.php'])
+    assert.equal(normalizeURL(raw, entry), entry);
+  assert.equal(
+    normalizeURL('?dataID=part_A-9&index=001#example', entry),
+    `${entry}?index=1&dataID=part_A-9`,
+  );
   assert.equal(normalizeURL('/adocs.php?index=1&amp;dataID=setup', entry), chapter);
   assert.equal(normalizeURL(chapter), chapter);
   const unsafe = [
-    '', '#menu', `${entry}#menu`, '?index=1', '?dataID=setup',
-    '?index=1&dataID=setup&action=delete', '?action=delete',
-    '?index=1&dataID=setup&index=2', '?index=1&dataID=setup&dataID=other',
-    '?index=-1&dataID=setup', '?index=1.2&dataID=setup', '?index=1e2&dataID=setup',
-    '?index=1&dataID=', '?index=1&dataID=foo/bar', '?index=1&dataID=foo%26action%3Ddelete',
-    '?index=1&dataID=setup&%69ndex=2', '?index=1&dataID=setup;action=delete',
-    'https://other.example.test/adocs.php?index=1&dataID=setup', '/logout.php',
+    '',
+    '#menu',
+    `${entry}#menu`,
+    '?index=1',
+    '?dataID=setup',
+    '?index=1&dataID=setup&action=delete',
+    '?action=delete',
+    '?index=1&dataID=setup&index=2',
+    '?index=1&dataID=setup&dataID=other',
+    '?index=-1&dataID=setup',
+    '?index=1.2&dataID=setup',
+    '?index=1e2&dataID=setup',
+    '?index=1&dataID=',
+    '?index=1&dataID=foo/bar',
+    '?index=1&dataID=foo%26action%3Ddelete',
+    '?index=1&dataID=setup&%69ndex=2',
+    '?index=1&dataID=setup;action=delete',
+    'https://other.example.test/adocs.php?index=1&dataID=setup',
+    '/logout.php',
     'http://manual.example.test/adocs.php?index=1&dataID=setup',
     'https://user:pass@manual.example.test/adocs.php?index=1&dataID=setup',
-    'javascript:alert(1)', 'data:text/html,hello', '?index=1&dataID=se\ntup',
+    'javascript:alert(1)',
+    'data:text/html,hello',
+    '?index=1&dataID=se\ntup',
   ];
   for (const raw of unsafe) assert.equal(normalizeURL(raw, entry), null, raw);
 });
@@ -33,25 +57,36 @@ test('mergeLinks preserves discovery order and saved progress while filling miss
   const existing = [{ url: chapter, title: '', status: 'failed', error: 'timeout', seed: true }];
   const found = [
     { url: `${entry}?dataID=setup&index=1#contents`, title: '安装' },
-    { url: review, title: '配置' }, { url: chapter, title: '覆盖标题' },
-    { url: failed, title: '故障' }, { url: `${entry}?index=4&dataID=x&action=delete`, title: '危险' },
+    { url: review, title: '配置' },
+    { url: chapter, title: '覆盖标题' },
+    { url: failed, title: '故障' },
+    { url: `${entry}?index=4&dataID=x&action=delete`, title: '危险' },
   ];
   assert.deepEqual(mergeLinks(existing, found, entry), [
     { url: chapter, title: '安装', status: 'failed', error: 'timeout', seed: true },
-    { url: review, title: '配置' }, { url: failed, title: '故障' },
+    { url: review, title: '配置' },
+    { url: failed, title: '故障' },
   ]);
   assert.equal(existing[0].title, '');
 });
 
 test('contentHash uses deterministic SHA-256 over exact UTF-8 content', async () => {
-  assert.equal(await contentHash('abc'), 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad');
+  assert.equal(
+    await contentHash('abc'),
+    'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad',
+  );
   assert.notEqual(await contentHash('配置'), await contentHash('配置 '));
 });
 
 function partialJob() {
   return {
-    schemaVersion: 1, entry, product: '', version: null,
-    createdAt: '2026-09-15T12:00:00.000Z', updatedAt: '2026-09-15T12:10:00.000Z', status: 'interrupted',
+    schemaVersion: 1,
+    entry,
+    product: '',
+    version: null,
+    createdAt: '2026-09-15T12:00:00.000Z',
+    updatedAt: '2026-09-15T12:10:00.000Z',
+    status: 'interrupted',
     queue: [
       { url: chapter, title: '安装', status: 'captured', seed: true },
       { url: review, title: '疑似重复章节', status: 'review', error: '正文与其他章节相同' },
@@ -59,11 +94,37 @@ function partialJob() {
       { url: pending, title: '下一章', status: 'pending' },
     ],
     pages: {
-      [chapter]: { status: 'ok', url: chapter, title: '安装', text: '安装步骤与配置说明', markdown: '安装步骤与配置说明\n\n![拓扑](data:image/png;base64,AAAA)', html: '<p>安装步骤与配置说明</p><img alt="拓扑" src="data:image/png;base64,AAAA">', links: [], warnings: ['一张图片加载失败'], diagnostics: { imageCount: 2 }, hash: 'hash-1', capturedAt: '2026-09-15T12:01:00.000Z' },
-      [review]: { status: 'ok', url: review, title: '疑似重复章节', text: '待核对的正文', markdown: '待核对的正文', html: '<p>待核对的正文</p>', links: [], warnings: [], diagnostics: {}, hash: 'hash-2', capturedAt: '2026-09-15T12:02:00.000Z' },
+      [chapter]: {
+        status: 'ok',
+        url: chapter,
+        title: '安装',
+        text: '安装步骤与配置说明',
+        markdown: '安装步骤与配置说明\n\n![拓扑](data:image/png;base64,AAAA)',
+        html: '<p>安装步骤与配置说明</p><img alt="拓扑" src="data:image/png;base64,AAAA">',
+        links: [],
+        warnings: ['一张图片加载失败'],
+        diagnostics: { imageCount: 2 },
+        hash: 'hash-1',
+        capturedAt: '2026-09-15T12:01:00.000Z',
+      },
+      [review]: {
+        status: 'ok',
+        url: review,
+        title: '疑似重复章节',
+        text: '待核对的正文',
+        markdown: '待核对的正文',
+        html: '<p>待核对的正文</p>',
+        links: [],
+        warnings: [],
+        diagnostics: {},
+        hash: 'hash-2',
+        capturedAt: '2026-09-15T12:02:00.000Z',
+      },
     },
-    discoveryWarnings: ['一处动态目录无法识别'], scanDiagnostics: { unmatchedMenuCount: 1 },
-    cookies: 'should-never-be-exported', token: 'secret-token',
+    discoveryWarnings: ['一处动态目录无法识别'],
+    scanDiagnostics: { unmatchedMenuCount: 1 },
+    cookies: 'should-never-be-exported',
+    token: 'secret-token',
   };
 }
 
@@ -152,12 +213,16 @@ test('Markdown plaintext fallback escapes raw HTML instead of introducing active
 
 test('complex HTML tables reference offline images without embedding base64 in Markdown', () => {
   const job = partialJob();
-  const table = '<table><tbody><tr><td rowspan="2"><img alt="A > B &amp; &quot;拓扑&quot;" src="data:image/png;base64,AAAA"></td><td>说明</td></tr><tr><td><table><tr><td><img src="data:image/png;base64,BBBB"></td></tr></table></td></tr></tbody></table>';
+  const table =
+    '<table><tbody><tr><td rowspan="2"><img alt="A > B &amp; &quot;拓扑&quot;" src="data:image/png;base64,AAAA"></td><td>说明</td></tr><tr><td><table><tr><td><img src="data:image/png;base64,BBBB"></td></tr></table></td></tr></tbody></table>';
   job.pages[chapter].markdown = `表格说明\n\n${table}`;
   job.pages[chapter].html = table;
   const { markdown, html } = buildExports(job);
   assert.doesNotMatch(markdown, /data:image\/png;base64/);
-  assert.match(markdown, /<td rowspan="2"><a href="offline\.html#chapter-1">\[图片：A &gt; B &amp; &quot;拓扑&quot;，见离线 HTML\]<\/a><\/td>/);
+  assert.match(
+    markdown,
+    /<td rowspan="2"><a href="offline\.html#chapter-1">\[图片：A &gt; B &amp; &quot;拓扑&quot;，见离线 HTML\]<\/a><\/td>/,
+  );
   assert.match(markdown, /未命名图片/);
   assert.match(markdown, /<table>/);
   assert.match(html, /data:image\/png;base64,AAAA/);
@@ -167,14 +232,20 @@ test('complex HTML tables reference offline images without embedding base64 in M
 test('replacing table images preserves literal table code examples', () => {
   const job = partialJob();
   const literal = '<table><tr><td><img src="data:image/png;base64,LITERAL"></td></tr></table>';
-  const actual = '<table><tr><td rowspan="2"><img src="data:image/png;base64,ACTUAL"></td></tr></table>';
+  const actual =
+    '<table><tr><td rowspan="2"><img src="data:image/png;base64,ACTUAL"></td></tr></table>';
   job.pages[chapter].markdown = `\`\`\`html\n${literal}\n\`\`\`\n\n${actual}`;
   const { markdown } = buildExports(job);
   assert.ok(markdown.includes(literal));
   assert.doesNotMatch(markdown, /data:image\/png;base64,ACTUAL/);
 });
 
-const tree = (path, extra = {}) => ({ url: entry, title: path.at(-1), locator: { kind: 'sangfor-ext-tree', path }, ...extra });
+const tree = (path, extra = {}) => ({
+  url: entry,
+  title: path.at(-1),
+  locator: { kind: 'sangfor-ext-tree', path },
+  ...extra,
+});
 const onePath = ['1 Overview', '1.1 Setup'];
 const oneKey = 'toc:%5B%221%20Overview%22%2C%221.1%20Setup%22%5D';
 
@@ -182,13 +253,22 @@ test('tree chapters with the same URL keep separate stable identities and reject
   const first = tree(onePath);
   const second = tree(['2 Overview', '2.1 Setup']);
   const invalid = [
-    {kind:'javascript',path:onePath}, {kind:'sangfor-ext-tree',path:[]},
-    {kind:'sangfor-ext-tree',path:Array(13).fill('x')}, {kind:'sangfor-ext-tree',path:['']},
-    {kind:'sangfor-ext-tree',path:[' '.repeat(2)]}, {kind:'sangfor-ext-tree',path:['x'.repeat(201)]},
-    {kind:'sangfor-ext-tree',path:[17]}, {kind:'sangfor-ext-tree',path:onePath,nodeId:'logout'},
+    { kind: 'javascript', path: onePath },
+    { kind: 'sangfor-ext-tree', path: [] },
+    { kind: 'sangfor-ext-tree', path: Array(13).fill('x') },
+    { kind: 'sangfor-ext-tree', path: [''] },
+    { kind: 'sangfor-ext-tree', path: [' '.repeat(2)] },
+    { kind: 'sangfor-ext-tree', path: ['x'.repeat(201)] },
+    { kind: 'sangfor-ext-tree', path: [17] },
+    { kind: 'sangfor-ext-tree', path: onePath, nodeId: 'logout' },
   ];
-  for (const locator of invalid) assert.deepEqual(mergeLinks([], [tree(onePath, {locator})], entry), []);
-  const merged = mergeLinks([], [first, second, first, ...invalid.map(locator => tree(onePath, {locator}))], entry);
+  for (const locator of invalid)
+    assert.deepEqual(mergeLinks([], [tree(onePath, { locator })], entry), []);
+  const merged = mergeLinks(
+    [],
+    [first, second, first, ...invalid.map((locator) => tree(onePath, { locator }))],
+    entry,
+  );
   assert.equal(merged.length, 2);
   assert.equal(merged[0].key, oneKey);
   assert.deepEqual(merged[0].locator, first.locator);
@@ -199,8 +279,14 @@ test('tree chapters with the same URL keep separate stable identities and reject
 });
 
 test('a numbered tree title upgrades only one matching legacy chapter without losing its progress', () => {
-  const previous = { url: chapter, title: '1.1 Setup', status: 'captured', error:'kept', seed:true };
-  const incoming = tree(onePath, {status:'pending', error:'discarded'});
+  const previous = {
+    url: chapter,
+    title: '1.1 Setup',
+    status: 'captured',
+    error: 'kept',
+    seed: true,
+  };
+  const incoming = tree(onePath, { status: 'pending', error: 'discarded' });
   const merged = mergeLinks([previous], [incoming], entry);
   assert.equal(merged.length, 1);
   assert.equal(merged[0].url, chapter);
@@ -210,18 +296,22 @@ test('a numbered tree title upgrades only one matching legacy chapter without lo
   assert.deepEqual(merged[0].locator, incoming.locator);
   assert.equal(previous.locator, undefined);
   assert.equal(mergeLinks(merged, [incoming], entry).length, 1);
-  assert.equal(mergeLinks([{...previous,title:'Setup'}], [tree(['Setup'])], entry).length, 2);
-  assert.equal(mergeLinks([previous, {...previous,url:review}], [incoming], entry).length, 3);
+  assert.equal(mergeLinks([{ ...previous, title: 'Setup' }], [tree(['Setup'])], entry).length, 2);
+  assert.equal(mergeLinks([previous, { ...previous, url: review }], [incoming], entry).length, 3);
 });
 
 test('tree exports preserve identities and render each saved body with its actual source and directory path', () => {
   const second = tree(['2 Overview', '2.1 Setup']);
   const twoKey = 'toc:%5B%222%20Overview%22%2C%222.1%20Setup%22%5D';
   const job = {
-    entry, queue:[{...tree(onePath),key:oneKey,status:'captured'},{...second,key:twoKey,status:'captured'}],
-    pages:{
-      [oneKey]:{status:'ok',url:chapter,text:'Unique first body'},
-      [twoKey]:{status:'ok',url:entry,text:'Unique second body'},
+    entry,
+    queue: [
+      { ...tree(onePath), key: oneKey, status: 'captured' },
+      { ...second, key: twoKey, status: 'captured' },
+    ],
+    pages: {
+      [oneKey]: { status: 'ok', url: chapter, text: 'Unique first body' },
+      [twoKey]: { status: 'ok', url: entry, text: 'Unique second body' },
     },
   };
   const output = buildExports(job);
@@ -229,12 +319,44 @@ test('tree exports preserve identities and render each saved body with its actua
   assert.equal(archive.queue[0].key, oneKey);
   assert.deepEqual(archive.queue[0].locator.path, onePath);
   assert.equal(archive.pages[oneKey].url, chapter);
-  for (const rendered of [output.markdown,output.html]) {
-    assert.match(rendered,/Unique first body/);
-    assert.match(rendered,/Unique second body/);
-    assert.match(rendered,/目录路径/);
-    assert.match(rendered,/1 Overview/);
+  for (const rendered of [output.markdown, output.html]) {
+    assert.match(rendered, /Unique first body/);
+    assert.match(rendered, /Unique second body/);
+    assert.match(rendered, /目录路径/);
+    assert.match(rendered, /1 Overview/);
   }
-  assert.match(output.report,/已采集正文：2/);
+  assert.match(output.report, /已采集正文：2/);
   assert.ok(output.report.includes(chapter));
+});
+
+test('export reports a saved example title with no body instead of hiding the omission', () => {
+  const page = {
+    status: 'ok',
+    text: '请求样例',
+    markdown: '请求样例',
+    html: '<div><div><span></span>请求样例</div></div>',
+  };
+  const job = {
+    queue: [{ url: chapter, title: 'Example', status: 'captured' }],
+    pages: { [chapter]: page },
+  };
+  const before = JSON.stringify(job);
+  const output = buildExports(job);
+  for (const key of ['markdown', 'html', 'report']) assert.match(output[key], /样例只有标题/);
+  assert.equal(JSON.stringify(job), before, 'export must not rewrite stored pages');
+});
+
+test('missing-example detection requires the observed empty shell, not a label mentioned in prose', () => {
+  assert.equal(hasMissingExamples({ html: '<p>请求样例</p><pre>GET /example</pre>' }), false);
+  assert.equal(
+    hasMissingExamples({
+      html: '<div><div><span></span>请求样例</div><div><pre>GET /example</pre></div></div>',
+    }),
+    false,
+  );
+  assert.equal(
+    hasMissingExamples({ html: '<div><div><span></span>返回样例<span>成功\n </span></div></div>' }),
+    true,
+  );
+  assert.equal(hasMissingExamples(null), false);
 });

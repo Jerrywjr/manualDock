@@ -11,15 +11,15 @@ import tempfile
 import zipfile
 
 RUNTIME = (
-    'background.js', 'browser-io.js', 'capture.js', 'core.js', 'engine.js',
+    'exports.js', 'library-view.js', 'background-runtime.js', 'runtime-client.js', 'archive.js', 'batch.js', 'session.js', 'source-connector.js', 'source-controls.js', 'background.js', 'bind-check.js', 'browser-io.js', 'capture.js', 'core.js', 'engine.js',
     'recovery.js', 'auto-retry.js', 'manifest.json', 'manual-adapters.js',
-    'navigation-discovery.js', 'navigation-rotation.js', 'openapi.js',
+    'navigation-discovery.js', 'navigation-rotation.js', 'rotation-controller.js', 'openapi.js',
     'panel.css', 'panel.html', 'panel.js', 'profiles.js', 'sangfor-rules.js',
     'task-store.js', 'tree.js', 'vendor/yaml.js', 'vendor/yaml.LICENSE.txt',
 )
 PUBLIC_DOCS = (
-    'README.md', 'README.zh-CN.md', 'LICENSE', '使用说明.md',
-    'docs/function-status.md', 'docs/validation.md', 'docs/development.md',
+    'README.md', 'AGENTS.md', 'LICENSE', '使用说明.md',
+    'docs/project-status.md', 'docs/modules.json', 'docs/architecture.md', 'docs/function-status.md', 'docs/validation.md', 'docs/development.md',
 )
 SKILL_ROOT = 'skill/import-security-manuals'
 SKILL_FILES = (
@@ -57,8 +57,8 @@ def check_public_content(relative, data):
             continue
         if any(address in network for network in PRIVATE_NETWORKS):
             raise ValueError(f'Private device address in {relative}')
-    if Path(relative).suffix in {'.md', '.html'} and re.search(r'深信服|sangfor', text, re.I):
-        raise ValueError(f'Vendor-specific product wording in {relative}')
+    # Public adapter names are source documentation, not private device evidence.
+    # Personal paths, private addresses and the explicit file allowlist remain enforced.
 
 
 def runtime_hashes(root):

@@ -15,3 +15,7 @@ internal/
 .env
 .env.*
 !.env.example
+
+# Public module ownership manifest; other docs JSON remains local evidence.
+!docs/modules.json
+.workbuddy/

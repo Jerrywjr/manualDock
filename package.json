@@ -1,6 +1,6 @@
 {
   "name": "manualdock",
-  "version": "0.2.2",
+  "version": "0.3.7",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,12 +8,28 @@
     "build:openapi": "node scripts/build-openapi-vendor.mjs",
     "test:openapi": "node --test tests/openapi.test.mjs",
     "test:openapi:browser": "OPENAPI_BROWSER=1 node --test tests/openapi.test.mjs",
-    "test:browser": "node tests/universal.browser.integration.mjs"
+    "test:browser": "node tests/universal.browser.integration.mjs",
+    "format": "prettier --write extension tests scripts/*.mjs *.json *.md docs/*.md ci/*.yml .prettierrc.json",
+    "format:check": "prettier --check extension tests scripts/*.mjs *.json *.md docs/*.md ci/*.yml .prettierrc.json",
+    "check:source": "node scripts/check-source.mjs",
+    "sync:assets": "node scripts/sync-assets.mjs",
+    "check:assets": "node scripts/sync-assets.mjs --check",
+    "check": "npm run format:check && npm run check:source && npm run check:assets && npm run check:handoff && npm run check:public",
+    "test:workspace": "node tests/workspace.browser.mjs",
+    "test:layout": "node tests/layout.browser.mjs",
+    "test:scan:browser": "node tests/scan-workspace.browser.mjs",
+    "test:runtime": "node tests/runtime.browser.mjs",
+    "test:recognition": "node tests/recognition.browser.mjs",
+    "check:handoff": "node scripts/check-handoff.mjs",
+    "check:public": "python3 -B scripts/prepare_public.py --check",
+    "test:library": "node tests/library-layout.browser.mjs"
   },
   "devDependencies": {
     "esbuild": "0.28.2",
+    "fake-indexeddb": "6.2.5",
     "jsdom": "26.1.0",
-    "playwright": "1.63.0"
+    "playwright": "1.63.0",
+    "prettier": "3.9.10"
   },
   "dependencies": {
     "yaml": "2.9.1"

@@ -1,21 +1,19 @@
 {
   "manifest_version": 3,
   "name": "ManualDock",
-  "version": "0.2.2",
+  "version": "0.3.7",
   "description": "采集已登录设备的在线手册与API文档，点选校准、断点续传并导出本地文件。",
-  "minimum_chrome_version": "109",
-  "permissions": [
-    "activeTab",
-    "scripting",
-    "unlimitedStorage"
-  ],
+  "minimum_chrome_version": "110",
+  "permissions": ["activeTab", "scripting", "unlimitedStorage", "alarms"],
   "action": {
     "default_title": "导入文档 / 配置导航轮换"
   },
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background.js",
+    "type": "module"
   },
   "content_security_policy": {
     "extension_pages": "script-src 'self'; object-src 'none'; connect-src 'none'"
-  }
+  },
+  "optional_host_permissions": ["http://*/*", "https://*/*"]
 }

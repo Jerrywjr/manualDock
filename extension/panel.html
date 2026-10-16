@@ -1,24 +1,480 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>ManualDock</title><link rel="stylesheet" href="panel.css"></head>
-<body><main class="app">
-<header class="app-header"><div class="brand"><span class="brand-mark" aria-hidden="true">M</span><h1>ManualDock</h1><span class="version">0.2.2</span></div><span class="local-label">文档保存在本机</span></header>
-<nav class="mode-nav" aria-label="文档来源"><button data-mode="web" aria-current="page">在线手册 <span>API / 命令行</span></button><button data-mode="spec">规范文件 <span>JSON / YAML</span></button><button data-mode="library">已保存 <span>管理与删除</span></button><button data-mode="rotation">后台菜单轮换 <span>可选</span></button></nav>
-<p id="connection" class="source-line">正在连接原标签页…</p><p id="error" class="error-banner" role="alert" hidden></p>
-<div class="workspace"><div class="operations">
-<section id="document-meta" class="document-meta" aria-label="文档信息"><label>产品名称 <span class="optional">选填</span><input id="product" placeholder="例如：IPS" maxlength="120"></label><label>产品版本 <span class="optional">选填</span><input id="version" placeholder="未知" maxlength="80"></label></section>
-<section data-panel="web">
-<section class="card check-card" aria-labelledby="check-title"><div class="card-heading"><h2 id="check-title"><span class="step">1</span>检查识别结果</h2><button id="detect" class="quiet">重新识别</button></div>
-<div class="recognition-grid"><div><span>目录</span><strong id="directory-state">等待识别</strong></div><div><span>正文</span><strong id="article-state">等待识别</strong></div></div><p id="recognition-message" class="recognition-message" role="status">正在检查目录与正文…</p>
-<label class="saved-rule">使用规则<select id="profile-list"><option value="">自动识别当前页面</option></select></label>
-<details id="calibration" class="calibration"><summary>识别不准？手动校准</summary><p class="hint">在原页面选择目录和正文，再选两个不同章节验证。Esc 取消点选。</p>
-<div class="actions"><button id="pick-toc">选择目录区域</button><button id="pick-content">选择正文区域</button></div><div class="actions"><button id="sample-a">选择章节 A</button><button id="sample-b">选择章节 B</button></div><p id="samples" class="hint">开始时会自动验证两个章节。</p><button id="verify">验证两章并保存规则</button><p id="profile-status" class="hint" role="status">正在识别目录和正文…</p>
-<details class="advanced"><summary>高级规则与导入 / 导出</summary><label>手册路径范围<input id="scope" placeholder="/docs/"></label><label>目录区域<input id="toc-selector"></label><label>正文区域<input id="content-selector"></label><label>章节路由<select id="hash-mode"><option value="none">普通页面</option><option value="route"># 后内容标识章节</option><option value="anchor"># 后内容只是本页位置</option></select></label><div class="actions"><button id="export-profile">导出规则</button><label class="file-button">导入规则<input id="import-profile" type="file" accept=".json,application/json"></label></div></details></details></section>
-<section class="card" aria-labelledby="collect-title"><h2 id="collect-title"><span class="step">2</span>采集手册</h2><div id="status" class="task-status" role="status" aria-live="polite">准备就绪</div><div class="stats"><div><strong id="found">0</strong><span>已发现</span></div><div><strong id="captured">0</strong><span>已保存</span></div><div><strong id="remaining">0</strong><span>待处理</span></div><div><strong id="issues">0</strong><span>需核对</span></div></div><div class="actions main-actions"><button id="start" class="primary">开始采集</button><button id="pause" disabled>暂停</button></div><p id="retry-status" class="hint" role="status">开始后启用自动恢复。</p><details class="advanced"><summary>重扫目录与重试</summary><div class="actions"><button id="scan">重新扫描目录</button><button id="retry">重试失败 / 待核对</button></div></details></section>
-</section>
-<section data-panel="spec" class="card" hidden><h2>导入规范文件</h2><p class="hint">支持 Swagger / OpenAPI 的 JSON、YAML。在线 API 网页请用“在线手册”。</p><label class="upload-area">选择本地文件<input id="spec-file" type="file" accept=".json,.yaml,.yml,application/json"></label><details class="advanced"><summary>从同一网站读取规范文件</summary><label>规范文件地址<input id="spec-url" type="url" placeholder="https://设备地址/docs/openapi.json"></label><button id="fetch-spec">读取文件</button></details><p id="spec-status" class="hint" role="status"></p></section>
-<section data-panel="rotation" class="card" hidden><h2>后台菜单轮换</h2><p class="hint">请在独立的管理标签页使用；手册采集放在另一个标签页。</p><div class="actions"><button id="rotation-preset">识别主菜单</button><button id="rotation-pick">手动添加菜单</button><button id="rotation-clear" class="quiet">清空</button></div><ol id="rotation-targets"></ol><label>点击间隔（秒）<input id="rotation-interval" type="number" min="30" max="3600" value="60"></label><div class="actions"><button id="rotation-trial">试运行</button><button id="rotation-save" disabled>保存规则</button><button id="rotation-start" class="primary">开始轮换</button><button id="rotation-stop">停止</button></div><p id="rotation-status" class="hint" role="status">尚未启动。</p><details class="advanced"><summary>轮换规则导入 / 导出</summary><div class="actions"><button id="rotation-export">导出规则</button><label class="file-button">导入规则<input id="rotation-import" type="file" accept=".json"></label></div></details><p class="hint">菜单点击不保证会话续期；结束时点击“停止”。</p></section>
-<section data-panel="library" class="card" hidden><div class="card-heading"><h2>已保存任务</h2><button id="refresh-library" class="quiet">刷新</button></div><p class="hint">两本手册可以在各自标签页同时采集：在每个手册标签页点击扩展，各自开始即可。这里汇总所有任务的进度与最近保存时间。</p><ul id="task-list"></ul></section>
-<section class="card export" aria-labelledby="export-title"><h2 id="export-title"><span class="step" id="export-step">3</span>导出已保存内容</h2><div class="export-options"><button data-export="markdown" disabled>Markdown<span>文字与表格</span></button><button data-export="html" disabled>离线 HTML<span>正文与已存图片</span></button><button data-export="json" disabled>完整 JSON<span>本地检索与备份</span></button><button data-export="report" disabled>采集报告<span>失败与待核对项</span></button></div></section>
-</div><aside class="preview-column" aria-label="采集内容"><section class="card preview-card"><div class="card-heading"><h2>正文预览</h2><span class="subtle">核对是否选对内容</span></div><pre id="preview">识别后在这里查看正文</pre></section><details class="card chapter-card"><summary>已发现章节</summary><ol id="chapters"></ol></details><details class="card diagnostic-card"><summary>识别诊断</summary><pre id="diagnostics"></pre></details><details class="card diagnostic-card"><summary>最近错误（含历史任务，不记录页面内容或凭据）</summary><pre id="error-log">暂无记录</pre></details></aside></div>
-<footer><details><summary>使用须知</summary><p>采集时保留原手册页与控制页；登录失效请自行登录。发现的章节数量不代表整本手册完整。程序不执行文档中的命令或接口示例。</p></details></footer>
-</main><script type="module" src="panel.js"></script></body></html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ManualDock</title>
+    <link rel="stylesheet" href="panel.css" />
+  </head>
+  <body>
+    <main class="app" data-current-mode="rotation">
+      <header class="app-header">
+        <div class="brand">
+          <span class="brand-mark" aria-hidden="true">M<span></span></span>
+          <h1>ManualDock</h1>
+          <span class="version">0.3.7</span>
+        </div>
+        <span class="local-label"
+          ><span class="status-dot" aria-hidden="true"></span>文档保存在本机</span
+        >
+      </header>
+
+      <nav class="mode-nav" aria-label="工作区">
+        <button data-mode="rotation" aria-current="page">菜单轮换<span>配置受控页面</span></button>
+        <button data-mode="batch">采集工作台<span>多个标签页</span></button>
+        <button data-mode="web">识别与校准<span>当前选中的网页</span></button>
+        <button data-mode="spec">规范文件<span>OpenAPI / Swagger</span></button>
+        <button data-mode="library">已保存<span>本地资料库</span></button>
+      </nav>
+
+      <div class="source-status">
+        <form id="source-connect-form" class="source-connect-form">
+          <label class="visually-hidden" for="source-url">要控制的页面 URL</label>
+          <input
+            id="source-url"
+            type="url"
+            placeholder="粘贴要控制的页面 URL，如 https://device.example.com/"
+            autocomplete="url"
+            spellcheck="false"
+            required
+          />
+          <button id="source-connect" class="primary" type="submit">连接页面</button>
+        </form>
+        <label class="source-select-field" for="source-select"
+          ><span id="source-select-label">文档来源</span
+          ><select id="source-select">
+            <option value="">尚未连接页面</option>
+          </select></label
+        >
+        <p id="connection" class="source-line">先连接需要控制的页面。</p>
+        <p id="source-connect-status" class="source-connect-status" role="status">
+          粘贴地址连接，或在目标页面点击扩展图标。
+        </p>
+        <p id="error" class="error-banner" role="alert" hidden></p>
+      </div>
+
+      <div class="workspace">
+        <div class="operations">
+          <section id="document-meta" class="document-meta" aria-label="文档信息" hidden>
+            <label for="product"
+              >产品名称 <span class="optional">选填</span
+              ><input id="product" placeholder="例如：IPS" maxlength="120"
+            /></label>
+            <label for="version"
+              >产品版本 <span class="optional">选填</span
+              ><input id="version" placeholder="未知" maxlength="80"
+            /></label>
+          </section>
+
+          <section data-panel="web" class="card web-card" hidden>
+            <nav class="operation-nav" aria-label="采集设置">
+              <button data-operation="collect" aria-selected="true">采集进度</button
+              ><button data-operation="identify" aria-selected="false">识别设置</button>
+            </nav>
+            <section
+              data-operation-panel="collect"
+              class="operation-panel collect-panel"
+              aria-labelledby="collect-title"
+            >
+              <div class="collection-heading">
+                <h2 id="collect-title">当前手册</h2>
+                <div id="status" class="task-status" role="status" aria-live="polite">准备就绪</div>
+              </div>
+              <div class="stats">
+                <div><strong id="found">0</strong><span>已发现</span></div>
+                <div><strong id="captured">0</strong><span>已保存</span></div>
+                <div><strong id="remaining">0</strong><span>待处理</span></div>
+                <div><strong id="issues">0</strong><span>失败 / 待核对</span></div>
+              </div>
+              <div class="actions main-actions">
+                <button id="start" class="primary">开始采集</button
+                ><button id="pause" disabled>暂停</button>
+              </div>
+              <button
+                id="collection-message"
+                class="collection-message"
+                type="button"
+                aria-label="查看采集停止原因"
+                hidden
+              ></button>
+              <div class="quick-actions">
+                <button id="capture-current">采集当前章</button><button id="scan">扫描目录</button
+                ><button id="retry">重试问题项</button>
+              </div>
+              <p id="retry-status" class="hint status-note" role="status">
+                采集在后台运行；保留原手册页，可刷新或关闭控制页。
+              </p>
+            </section>
+            <section
+              data-operation-panel="identify"
+              class="operation-panel identify-panel"
+              aria-labelledby="check-title"
+              hidden
+            >
+              <div class="card-heading">
+                <h2 id="check-title">目录与正文</h2>
+                <button id="detect" class="quiet">快速识别目录</button>
+              </div>
+              <div class="recognition-grid">
+                <div><span>目录</span><strong id="directory-state">等待识别</strong></div>
+                <div><span>正文</span><strong id="article-state">等待识别</strong></div>
+              </div>
+              <div class="recognition-bottom">
+                <p id="recognition-message" class="recognition-message" role="status">
+                  正在检查目录与正文…
+                </p>
+                <button id="open-calibration">手动校准</button>
+                <button id="cancel-scan" hidden>停止扫描</button>
+              </div>
+            </section>
+            <dialog
+              id="calibration-dialog"
+              class="settings-dialog"
+              aria-labelledby="calibration-title"
+            >
+              <div class="dialog-heading">
+                <div>
+                  <span class="eyebrow">识别设置</span>
+                  <h2 id="calibration-title">校准目录与正文</h2>
+                </div>
+                <button class="icon-button" data-close-dialog aria-label="关闭校准窗口">×</button>
+              </div>
+              <details id="calibration" class="calibration" open>
+                <summary class="visually-hidden">手动校准</summary>
+                <div class="local-tabs calibration-tabs">
+                  <input
+                    class="tab-radio"
+                    type="radio"
+                    name="calibration-view"
+                    id="calibration-basic-tab"
+                    checked
+                  /><label class="tab-label" for="calibration-basic-tab">页面点选</label>
+                  <input
+                    class="tab-radio"
+                    type="radio"
+                    name="calibration-view"
+                    id="calibration-advanced-tab"
+                  /><label class="tab-label" for="calibration-advanced-tab">高级规则</label>
+                  <div class="local-pane basic-pane">
+                    <p class="hint">
+                      在原页面选择目录和正文，再选两个不同章节验证。按 Esc 取消点选。
+                    </p>
+                    <div class="calibration-step">
+                      <span class="step">1</span>
+                      <div>
+                        <h3>选定采集区域</h3>
+                        <div class="actions">
+                          <button id="pick-toc">选择目录区域</button
+                          ><button id="pick-content">选择正文区域</button>
+                        </div>
+                      </div>
+                    </div>
+                    <div class="calibration-step">
+                      <span class="step">2</span>
+                      <div>
+                        <h3>核对章节切换</h3>
+                        <div class="actions">
+                          <button id="sample-a">选择章节 A</button
+                          ><button id="sample-b">选择章节 B</button>
+                        </div>
+                        <p id="samples" class="hint">开始时会自动验证两个章节。</p>
+                      </div>
+                    </div>
+                    <button id="verify" class="primary full-button">验证两章并保存规则</button>
+                  </div>
+                  <div class="local-pane advanced-pane">
+                    <label for="scope">手册路径范围<input id="scope" placeholder="/docs/" /></label>
+                    <label for="toc-selector"
+                      >目录区域<input id="toc-selector" placeholder="目录的 CSS 选择器"
+                    /></label>
+                    <label for="content-selector"
+                      >正文区域<input id="content-selector" placeholder="正文的 CSS 选择器"
+                    /></label>
+                    <label for="hash-mode"
+                      >章节路由<select id="hash-mode">
+                        <option value="none">普通页面</option>
+                        <option value="route"># 后内容标识章节</option>
+                        <option value="anchor"># 后内容只是本页位置</option>
+                      </select></label
+                    >
+                    <div class="actions">
+                      <button id="export-profile">导出规则</button
+                      ><label class="file-trigger"
+                        >导入规则<input
+                          id="import-profile"
+                          type="file"
+                          accept=".json,application/json"
+                      /></label>
+                    </div>
+                  </div>
+                </div>
+                <p id="profile-status" class="dialog-status hint" role="status">
+                  正在识别目录和正文…
+                </p>
+              </details>
+            </dialog>
+          </section>
+
+          <section data-panel="spec" class="card spec-card" hidden aria-labelledby="spec-title">
+            <div class="card-heading">
+              <h2 id="spec-title">导入规范文件</h2>
+              <span class="subtle">JSON / YAML</span>
+            </div>
+            <div class="local-tabs spec-tabs">
+              <input
+                class="tab-radio"
+                type="radio"
+                name="spec-source"
+                id="spec-local-tab"
+                checked
+              /><label class="tab-label" for="spec-local-tab">本地文件</label>
+              <input class="tab-radio" type="radio" name="spec-source" id="spec-remote-tab" /><label
+                class="tab-label"
+                for="spec-remote-tab"
+                >同站地址</label
+              >
+              <div class="local-pane spec-local-pane">
+                <label class="upload-area" for="spec-file"
+                  ><span class="upload-symbol" aria-hidden="true">↥</span
+                  ><strong>选择规范文件</strong><span>Swagger / OpenAPI · JSON 或 YAML</span
+                  ><input id="spec-file" type="file" accept=".json,.yaml,.yml,application/json"
+                /></label>
+              </div>
+              <div class="local-pane spec-remote-pane">
+                <p class="hint">从原标签页所在的网站读取规范文件。</p>
+                <label for="spec-url"
+                  >规范文件地址<input
+                    id="spec-url"
+                    type="url"
+                    placeholder="https://设备地址/docs/openapi.json" /></label
+                ><button id="fetch-spec" class="primary full-button">读取文件</button>
+              </div>
+            </div>
+            <p id="spec-status" class="hint status-note" role="status">
+              只导入接口说明，不执行接口请求。
+            </p>
+          </section>
+
+          <section
+            data-panel="batch"
+            class="card batch-card full-panel"
+            hidden
+            aria-labelledby="batch-title"
+          >
+            <div class="card-heading">
+              <div>
+                <span class="eyebrow">多标签页工作区</span>
+                <h2 id="batch-title">采集工作台</h2>
+              </div>
+              <button id="batch-connect" class="quiet">刷新进度</button>
+            </div>
+            <div class="batch-toolbar">
+              <p class="batch-instruction">
+                先在“识别与校准”准备目录，再批量采集已就绪的来源。连接新页不会停止已有任务。
+              </p>
+              <div class="batch-global-actions">
+                <button id="batch-start-all" class="primary">开始已就绪（0）</button
+                ><button id="batch-pause-all">全部暂停</button>
+              </div>
+            </div>
+            <p id="batch-status" class="hint panel-description" role="status">尚未添加手册页面。</p>
+            <ul id="batch-list" class="paginated-list" aria-label="并行导入任务"></ul>
+            <div class="pagination" aria-label="并行任务分页">
+              <span id="batch-page" class="page-label" role="status">0 个任务</span>
+              <div>
+                <button id="batch-prev" aria-label="上一页并行任务" disabled>上一页</button
+                ><button id="batch-next" aria-label="下一页并行任务" disabled>下一页</button>
+              </div>
+            </div>
+          </section>
+
+          <section
+            data-panel="library"
+            class="card library-card full-panel"
+            hidden
+            aria-labelledby="library-title"
+          >
+            <div class="card-heading">
+              <div>
+                <span class="eyebrow">本机保存</span>
+                <h2 id="library-title">文档资料库</h2>
+              </div>
+              <div class="header-actions">
+                <label class="file-trigger"
+                  >导入归档<input
+                    id="import-archive"
+                    type="file"
+                    accept=".json,application/json" /></label
+                ><button id="refresh-library" class="quiet">刷新</button>
+              </div>
+            </div>
+            <div class="list-toolbar">
+              <label class="search-field" for="library-search"
+                ><span class="visually-hidden">搜索已保存任务</span
+                ><input
+                  id="library-search"
+                  type="search"
+                  placeholder="搜索产品、版本或来源" /></label
+              ><label for="library-filter"
+                ><span class="visually-hidden">按来源筛选任务</span
+                ><select id="library-filter">
+                  <option value="all">全部来源</option>
+                  <option value="web">在线手册</option>
+                  <option value="openapi">规范文件</option>
+                </select></label
+              >
+            </div>
+            <p id="sync-status" class="hint panel-description" role="status">
+              本地任务自动保存；可用完整 JSON 归档在本机恢复。
+            </p>
+            <ul id="task-list" class="paginated-list" aria-label="已保存的文档任务"></ul>
+            <div class="pagination" aria-label="资料库分页">
+              <span id="library-page" class="page-label" role="status">0 个任务</span>
+              <div>
+                <button id="library-prev" aria-label="上一页已保存任务" disabled>上一页</button
+                ><button id="library-next" aria-label="下一页已保存任务" disabled>下一页</button>
+              </div>
+            </div>
+          </section>
+
+          <section
+            data-panel="rotation"
+            class="card rotation-card full-panel"
+            aria-labelledby="rotation-title"
+          >
+            <div class="rotation-settings">
+              <div class="card-heading">
+                <div>
+                  <span class="eyebrow">先连接页面，再配置菜单</span>
+                  <h2 id="rotation-title">后台菜单轮换</h2>
+                </div>
+              </div>
+              <p class="hint rotation-help">
+                管理页和文档页在后台独立运行。保留来源标签页，控制页可随时刷新或关闭。
+              </p>
+              <div class="actions rotation-discovery">
+                <button id="rotation-preset">识别主菜单</button
+                ><button id="rotation-pick">手动添加</button
+                ><button id="rotation-clear" class="quiet">清空</button>
+              </div>
+              <label class="interval-field" for="rotation-interval"
+                >点击间隔<span
+                  ><input
+                    id="rotation-interval"
+                    type="number"
+                    min="30"
+                    max="3600"
+                    value="60"
+                  />秒</span
+                ></label
+              >
+              <div class="actions rotation-validation">
+                <button id="rotation-trial">试运行</button
+                ><button id="rotation-save" disabled>保存规则</button>
+              </div>
+              <div class="actions rotation-main">
+                <button id="rotation-start" class="primary">开始轮换</button
+                ><button id="rotation-stop">停止</button>
+              </div>
+              <p id="rotation-status" class="hint status-note" role="status">尚未启动。</p>
+              <div class="rotation-rule-actions">
+                <button id="rotation-remove" class="quiet">移除管理页</button>
+                <button id="rotation-export" class="quiet">导出规则</button
+                ><label class="file-trigger"
+                  >导入规则<input id="rotation-import" type="file" accept=".json"
+                /></label>
+              </div>
+              <p class="hint rotation-footnote">菜单点击不保证会话续期，结束时请停止。</p>
+            </div>
+            <div class="rotation-list-panel">
+              <div class="list-heading">
+                <h3>轮换顺序</h3>
+                <span class="subtle">核对后试运行</span>
+              </div>
+              <ol id="rotation-targets" class="paginated-list" aria-label="已选择的轮换菜单"></ol>
+              <div class="pagination" aria-label="轮换菜单分页">
+                <span id="rotation-page" class="page-label" role="status">0 个菜单</span>
+                <div>
+                  <button id="rotation-prev" aria-label="上一页轮换菜单" disabled>上一页</button
+                  ><button id="rotation-next" aria-label="下一页轮换菜单" disabled>下一页</button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </div>
+
+        <aside class="preview-column card" aria-label="内容核对">
+          <nav class="view-nav" aria-label="内容视图">
+            <button data-view="preview" aria-selected="true">正文预览</button
+            ><button data-view="chapters" aria-selected="false">章节目录</button
+            ><button data-view="diagnostics" aria-selected="false">识别诊断</button
+            ><button data-view="errors" aria-selected="false">错误记录</button>
+          </nav>
+          <section data-view-panel="preview" class="view-panel preview-card">
+            <div class="preview-heading">
+              <span class="eyebrow">内容核对</span><span class="subtle">仅预览已读取的正文</span>
+            </div>
+            <pre id="preview">识别后在这里查看正文</pre>
+          </section>
+          <section data-view-panel="chapters" class="view-panel chapter-card" hidden>
+            <div class="list-toolbar">
+              <label class="search-field" for="chapter-search"
+                ><span class="visually-hidden">搜索章节</span
+                ><input id="chapter-search" type="search" placeholder="搜索章节标题" /></label
+              ><label for="chapter-filter"
+                ><span class="visually-hidden">按状态筛选章节</span
+                ><select id="chapter-filter">
+                  <option value="all">全部状态</option>
+                  <option value="captured">已保存</option>
+                  <option value="pending">待处理</option>
+                  <option value="issues">需核对</option>
+                </select></label
+              >
+            </div>
+            <ol id="chapters" class="paginated-list" aria-label="已发现的章节"></ol>
+            <div class="pagination" aria-label="章节分页">
+              <span id="chapter-page" class="page-label" role="status">0 个章节</span>
+              <div>
+                <button id="chapter-prev" aria-label="上一页章节" disabled>上一页</button
+                ><button id="chapter-next" aria-label="下一页章节" disabled>下一页</button>
+              </div>
+            </div>
+          </section>
+          <section data-view-panel="diagnostics" class="view-panel diagnostic-card" hidden>
+            <div class="preview-heading">
+              <span class="eyebrow">识别诊断</span><span class="subtle">目录、规则与采集提示</span>
+            </div>
+            <pre id="diagnostics">暂无诊断信息</pre>
+          </section>
+          <section data-view-panel="errors" class="view-panel diagnostic-card" hidden>
+            <div class="preview-heading">
+              <span class="eyebrow">最近错误</span><span class="subtle">不记录页面内容或凭据</span>
+            </div>
+            <pre id="error-log">暂无记录</pre>
+          </section>
+        </aside>
+      </div>
+
+      <section class="export-dock" aria-labelledby="export-title">
+        <div class="export-label">
+          <span class="step" id="export-step">↓</span>
+          <div>
+            <h2 id="export-title">导出已保存内容</h2>
+            <span class="subtle">随时导出当前进度</span>
+          </div>
+        </div>
+        <div class="export-options">
+          <button data-export="markdown" disabled>Markdown<span>文字与表格</span></button
+          ><button data-export="html" disabled>离线 HTML<span>正文与已存图片</span></button
+          ><button data-export="json" disabled>完整 JSON<span>本地恢复与检索</span></button
+          ><button data-export="report" disabled>采集报告<span>失败与待核对项</span></button>
+        </div>
+      </section>
+      <footer>
+        <span id="rotation-background-status" role="status">菜单轮换未运行</span
+        ><span>保留源标签页 · 登录失效后请重新登录</span>
+      </footer>
+    </main>
+    <script type="module" src="panel.js"></script>
+  </body>
+</html>
