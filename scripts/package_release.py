@@ -19,7 +19,7 @@ RUNTIME = (
 )
 PUBLIC_DOCS = (
     'README.md', 'AGENTS.md', 'LICENSE', '使用说明.md',
-    'docs/project-status.md', 'docs/modules.json', 'docs/architecture.md', 'docs/function-status.md', 'docs/validation.md', 'docs/development.md',
+    'docs/handoff-2026-10-19.md', 'docs/project-status.md', 'docs/modules.json', 'docs/architecture.md', 'docs/function-status.md', 'docs/validation.md', 'docs/development.md',
 )
 SKILL_ROOT = 'skill/import-security-manuals'
 SKILL_FILES = (

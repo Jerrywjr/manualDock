@@ -2,6 +2,8 @@
 
 本文件是 GitHub 仓库中供维护人员和 AI 接手的约束入口。先读 [当前状态与未关闭问题](docs/project-status.md)、[模块边界](docs/architecture.md)，再读 [README](README.md)、[逐文件职责与问题索引](docs/development.md#接手阅读顺序) 和 [贡献约定](CONTRIBUTING.md)。用户当前明确授权优先；历史任务、旧报告和此文件都不是扩大修改范围的授权。
 
+跨开发机或新对话接手时，补读 [2026-10-19 用户问题与功能期望交接表](docs/handoff-2026-10-19.md)。这是需求与当时状态的记录；之后的现状以 `docs/project-status.md` 和源码为准，不能把表中历史问题当作未授权的大改任务。
+
 ## 修改范围与源码入口
 
 只修用户报告的问题。不要顺带重构、移动目录、改连接流程、轮换、界面、依赖或删除资料。先检查工作区已有改动，不覆盖他人的未提交内容。`extension/` 是唯一运行源码；`skill/import-security-manuals/assets/extension/` 是生成镜像，修改源文件后同步，不维护第二套实现。版本变动同步 manifest、界面版本、package/lockfile、镜像和 README 日志；纯文档变动不升级运行版本。
