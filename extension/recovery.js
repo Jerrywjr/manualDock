@@ -1,3 +1,6 @@
+// 故障分类与恢复辅助：classifyRecoveryError 决定能否重试，scheduleRecovery 计算下次时间。
+// resetRetryableChapters 只重置可重试章节；collectionMessage 生成人能读懂的停止原因。
+// 未展开内容不会仅因延长预算而成为网络故障，仍需明确重试或检查来源页面。
 export const RETRY_INTERVAL_MS = 3 * 60 * 1000;
 const RETRY_DELAYS = [5000, 15000, 30000, 60000, RETRY_INTERVAL_MS];
 export const savedChapterCount = (task) =>

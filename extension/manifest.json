@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ManualDock",
-  "version": "0.3.7",
+  "version": "0.3.8",
   "description": "采集已登录设备的在线手册与API文档，点选校准、断点续传并导出本地文件。",
   "minimum_chrome_version": "110",
   "permissions": ["activeTab", "scripting", "unlimitedStorage", "alarms"],

@@ -26,7 +26,10 @@ const chapter = {
 
 // Exercise the real IO controller with a virtual clock and page-side replies.
 // This fixture represents asynchronous DOM states, not a real device capture.
-function pageBoundary(t, { bodyAt = 0, expansionMs = 0, preparation = 'ok' } = {}) {
+function pageBoundary(
+  t,
+  { bodyAt = 0, expansionMs = 0, preparationMs = 0, preparation = 'ok' } = {},
+) {
   const previous = {
     chrome: globalThis.chrome,
     setTimeout: globalThis.setTimeout,
@@ -91,6 +94,7 @@ function pageBoundary(t, { bodyAt = 0, expansionMs = 0, preparation = 'ok' } = {
           assert.equal(input.chapter.key, chapter.key);
           assert.deepEqual(input.locator, chapter.locator);
           events.push({ kind: 'prepare', at: now, before: state() });
+          now += preparationMs;
           preparedAt = now;
           return [
             {
@@ -184,3 +188,12 @@ for (const preparation of ['document-change', 'proof-change'])
     assert.equal(p.events.filter((event) => event.kind === 'capture').length, 0);
     assert.ok(result.error || result.page?.status === 'error', 'the invalid handoff must fail');
   });
+
+test('successful 55 second body preparation is not rejected by the separate 45 second navigation budget', async (t) => {
+  const p = pageBoundary(t, { preparationMs: 55000 });
+  const result = await outcome(p.run);
+  assert.equal(result.error, undefined);
+  assert.equal(result.page.status, 'ok');
+  assert.match(result.page.text, /response: \{"code":0\}/);
+  assert.equal(result.page.navigationProof.verified, true);
+});

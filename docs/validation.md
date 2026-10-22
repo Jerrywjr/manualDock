@@ -1,5 +1,19 @@
 # 验证范围与复现
 
+## 2026-10-19 0.3.8 正文展开预算与中文说明
+
+用户要求取消正文展开的 200 次点击总上限，将 12 秒总预算改为 60 秒，并补充使用说明及代码注释。运行行为只修改 `capture.js` 的预算和点击判断、`browser-io.js` 的换章计时衔接；其余运行脚本仅加中文注释，版本与技能镜像同步。单项 2 秒、同一控件反复出现保护、章节证明和最终完整性检查保留，目录扫描等待不变。
+
+新增回归先验证旧代码失败：超过 200 个已适配控件、20 秒后成功、60 秒仍有剩余内容时失败、55 秒成功展开不能被外层 45 秒期限拒绝。证据 `internal/budget-red.log` 为 4/4 按预期失败；随后专项 19/19 通过，证据 `internal/budget-focused-green.log`。相关命令 `node --test tests/capture-disclosures.test.mjs tests/content-preparation.test.mjs tests/browser-io.test.mjs tests/engine.test.mjs tests/recovery.test.mjs tests/core.test.mjs tests/integration-panel.test.mjs`：231/231 通过，约 27.7 秒，见 `internal/budget-related-tests.log`。
+
+全量 `npm test` 为 705 项、685 通过、19 失败、1 跳过，约 97.2 秒。失败不能省略：`tests/archive.test.mjs` 的 3 项和 `tests/universal-archive.test.mjs` 的 11 项调用硬编码 `python3`，并使用 URL 的 `.pathname` 作为脚本路径；本机出现进程调用失败，Windows 路径也不能按该方式转换。`tests/background.test.mjs` 的 4 项用只匹配 LF 的正则删除模块导入行，Windows CRLF 检出后未匹配，导致脚本执行报模块语法错误。这 18 项在未修改的 `0732f76` 原文件、Windows 检出换行和相同命令环境下隔离复现（`internal/budget-platform-baseline.log`）。剩余失败 `document collection verifies default extraction before adopting it into the session` 首轮状态为 `running` 而非 `finished`，随后包含它的相关回归通过；记录时序不稳定，不宣称全量通过。本次不修改这些无关测试或产品路径。
+
+浏览器检查使用本机 Chrome、项目内隔离配置和本地合成页面，注入实际 `tree.js`、`manual-adapters.js`、`capture.js`：205 次展开成功，文字、HTML、Markdown 均包含 205 个样例，执行按钮点击次数为 0，读取器版本 0.3.8，用时约 2.3 秒。见 `internal/budget-browser.log` 和本机脚本 `internal/budget-browser-smoke.mjs`。这只证明 Windows Chrome 本地合成页面的读取脚本行为，不等于真实设备或完整扩展的验收；60 秒边界由虚拟时钟回归覆盖，未让设备实验长时间挂起。
+
+原样 `npm run check` 停在 71 个 Windows CRLF 文件的格式检查；原文件未为此全仓重写。按原格式命令追加 `--end-of-line auto` 后通过，见 `internal/budget-format-windows.log`；`node scripts/check-source.mjs`、`node scripts/sync-assets.mjs --check`、`node scripts/check-handoff.mjs`、`python -X utf8 -B scripts/prepare_public.py --check` 与 `git diff --check` 通过。公开检查默认编码首轮失败，UTF-8 模式通过，不修改脚本来掩盖环境问题。
+
+尚未证明 0.3.7 报告中的 838 章最终完整性检查错误已经解决；即使不再因预算失败，晚出现或重新折叠的控件仍可能失败。旧缺漏正文需明确补采成功后才替换，未知弹窗和真实设备完整性继续按当前状态页列为未关闭。未生成发行包，未提交或推送。
+
 ## 2026-10-16 0.3.7 模块边界与接手检查
 
 当前结论及未关闭问题见 [project-status.md](project-status.md)，模块约束见 [architecture.md](architecture.md)。本次完整 Node 回归 700 通过、0 失败、1 个 OpenAPI 浏览器可选测试跳过（约 98 秒）；资料库五尺寸浏览器检查及多来源扩展集成（约 80 秒）通过。格式、72 个 JavaScript 文件语法、32 份镜像、模块覆盖和公开输入检查通过。细节、命令及本机日志路径集中保存在当前状态页，以下各日期段落仍是历史证据。

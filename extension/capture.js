@@ -1,3 +1,6 @@
+// 来源页中的读取脚本，由 browser-io.js 注入；不是后台任务调度器。
+// 主要入口：readState 只读检查正文，prepareContent 展开已适配控件，capture 提取正文。
+// 采集顺序：确认章节 → 展开参数与样例 → 等待稳定 → 再检查完整性 → 生成安全正文。
 (() => {
   'use strict';
 
@@ -26,6 +29,8 @@
     'image/x-icon',
     'image/vnd.microsoft.icon',
   ]);
+  // 每章正文展开共用一分钟，不按点击次数截断；单个控件仍最多等待两秒。
+  const MAX_CONTENT_PREPARATION_TIME = 60000;
   const MAX_IMAGE_BYTES = 2 * 1024 * 1024;
   const MAX_TOTAL_IMAGE_BYTES = 15 * 1024 * 1024;
   const MAX_IMAGES = 40;
@@ -179,6 +184,8 @@
 
   // Only disclosure controls whose structure is known belong here. Never click
   // arbitrary article buttons (API consoles may have real execution controls).
+  // 只识别已适配的样例面板与参数子树，不能把任意“+”或执行按钮当作展开控件。
+  // 返回项既包括未展开控件，也包括已展开但内部样例仍隐藏或为空的面板。
   function bodyDisclosures(root) {
     const allowed = (element) => {
       if (!visibleControl(element)) return false;
@@ -243,6 +250,8 @@
     return items;
   }
 
+  // 展开只作用于唯一正文区域；guard 在每次点击和等待中核对页面与章节。
+  // clicked 用于诊断统计，不是点击上限；同一控件反复出现仍报错，避免来回折叠。
   async function prepareContent(options = {}) {
     activeProfile = options.profile || null;
     let clicked = 0;
@@ -282,13 +291,13 @@
       };
       guard();
       if (loginPage(doc, doc.URL)) return { status: 'auth', clicked };
-      const deadline = Date.now() + 12000;
+      const deadline = Date.now() + MAX_CONTENT_PREPARATION_TIME;
       const attempted = new Set();
       for (;;) {
         guard();
         const item = bodyDisclosures(root)[0];
         if (!item) return { status: 'ok', clicked };
-        if (clicked >= 200 || Date.now() >= deadline || attempted.has(item.control))
+        if (Date.now() >= deadline || attempted.has(item.control))
           throw new Error('正文折叠内容未全部展开，未保存不完整章节');
         if (!item.collapsed())
           throw new Error('正文样例已展开但内容为空或仍被隐藏，未保存不完整章节');
@@ -1541,7 +1550,7 @@
     const entry = options.entry || location.href;
     const warnings = [];
     const diagnostics = {
-      extractorVersion: '0.3.6',
+      extractorVersion: '0.3.8',
       frames: 0,
       inaccessibleFrames: 0,
       unmappedHandlers: 0,
@@ -1704,6 +1713,8 @@
           }
         }
       }
+      // requireExpanded 仅表示调用方做过准备，不能免除最终内容检查。
+      // 若随后出现新的折叠内容，本次仍拒绝保存；增加预算不等于解决这种状态变化。
       if (!options.previewOnly && bodyDisclosures(selected.root).length) {
         diagnostics.reason = 'content-expansion-incomplete';
         result.error = '正文中仍有未展开的参数或样例，未保存不完整章节';

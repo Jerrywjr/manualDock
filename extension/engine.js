@@ -1,3 +1,6 @@
+// 整本采集的队列执行器：逐章调用浏览器读取，把正文和进度一起交给保存函数。
+// createTask 创建任务；run 推进待处理章节；checkpoint 保存检查点；pause 请求暂停。
+// 来源页连接和自动重试时机由 session.js 管理，不在这里操作扩展界面。
 import { cleanChapter, jobKey } from './profiles.js';
 import { contentHash } from './core.js';
 import { classifyRecoveryError, faultOf, pushFault, redact } from './recovery.js';
@@ -168,6 +171,7 @@ export class ImportEngine {
           (Number.isInteger(page.diagnostics?.images?.embedded) &&
             page.diagnostics.images.embedded > 0 &&
             /<img\b[^>]*src=["']data:image\//i.test(page.html || ''));
+        // 必须同时取得成功正文和章节证明；失败页不能因为已有文字就算采集成功。
         if (page.status !== 'ok' || !hasBody || page.navigationProof?.verified !== true) {
           chapter.status = 'failed';
           chapter.error = page.error || page.diagnostics?.reason || '未确认所选章节的正文加载完成';

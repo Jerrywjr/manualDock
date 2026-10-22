@@ -58,6 +58,57 @@ function wire(p, delay = 0) {
     }
   });
 }
+// 模拟正文逐组显示控件；只替换上一组，不移除当前正在检查的控件。
+// 使用虚拟时钟覆盖预算边界，避免真的让回归等待一分钟。
+function sequentialExamples(t, total, clickMs = 0) {
+  const p = page(t, example('请求样例', 'EXAMPLE_1'));
+  let now = 0;
+  let clicks = 0;
+  p.w.Date.now = () => now;
+  p.doc.addEventListener('click', (event) => {
+    const arrow = event.target.closest('.af-api-panel-arrow');
+    if (!arrow) return;
+    const panel = arrow.closest('.af-api-panel');
+    for (const previous of p.doc.querySelectorAll('.af-api-panel'))
+      if (previous !== panel) previous.remove();
+    clicks++;
+    now += clickMs;
+    arrow.classList.remove('af-api-panel-arrow-collapse');
+    arrow.parentElement.nextElementSibling.classList.remove('x-hide-display');
+    if (clicks < total)
+      panel.insertAdjacentHTML('afterend', example('返回样例', `EXAMPLE_${clicks + 1}`));
+  });
+  return { ...p, elapsed: () => now, clicks: () => clicks };
+}
+
+test('body preparation can expand more than 200 recognized controls within its time budget', async (t) => {
+  const p = sequentialExamples(t, 205);
+  const prepared = await p.w.ManualCapture.prepareContent(p.options);
+  assert.equal(prepared.status, 'ok');
+  assert.equal(prepared.clicked, 205);
+  assert.equal(p.doc.querySelector('pre').textContent, 'EXAMPLE_205');
+  assert.equal(p.doc.querySelectorAll('.x-hide-display').length, 0);
+});
+
+test('body preparation can finish after 12 seconds while still within 60 seconds', async (t) => {
+  const p = sequentialExamples(t, 20, 1000);
+  const prepared = await p.w.ManualCapture.prepareContent(p.options);
+  assert.equal(prepared.status, 'ok');
+  assert.equal(prepared.clicked, 20);
+  assert.equal(p.elapsed(), 20000);
+  assert.equal(p.doc.querySelector('pre').textContent, 'EXAMPLE_20');
+});
+
+test('body preparation stops at its 60 second budget with remaining content instead of claiming success', async (t) => {
+  const p = sequentialExamples(t, 70, 1000);
+  const prepared = await p.w.ManualCapture.prepareContent(p.options);
+  assert.equal(prepared.status, 'error');
+  assert.equal(prepared.diagnostics.reason, 'content-expansion-incomplete');
+  assert.equal(p.clicks(), 60);
+  assert.equal(p.elapsed(), 60000);
+  assert.equal(p.doc.querySelectorAll('.x-hide-display').length, 1);
+});
+
 test('body preparation expands nested parameter rows and all three examples without clicking navigation or execution controls', async (t) => {
   const p = page(
     t,

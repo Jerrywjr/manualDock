@@ -1,3 +1,5 @@
+// 后台与来源页的操作桥梁：注入脚本、打开章节、核对选中项、展开正文并读取。
+// createBrowserIO 为一个来源标签页建立操作集合；不负责数据库保存或整本队列推进。
 import { normalizeDocumentURL, cleanChapter, ruleSignature, validateProfile } from './profiles.js';
 import { classifyRecoveryError, recoveryError } from './recovery.js';
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -312,6 +314,8 @@ export function createBrowserIO(tabId) {
     await install();
     return adapter('pick', { kind, profile });
   }
+  // 单章流程：打开章节 → 证明已切换并稳定 → 准备正文 → 重新稳定 → 提取与复核。
+  // 目录选中只是其中一个条件，不能把上一章尚未替换的正文保存为当前章。
   async function capture(chapter, profile) {
     const captureStarted = Date.now();
     let current = await tab();
@@ -361,8 +365,9 @@ export function createBrowserIO(tabId) {
         });
       } else await chrome.tabs.update(tabId, { url: target });
     }
-    const start = Date.now(),
-      deadline = start + 45000;
+    const start = Date.now();
+    // 换章等待与正文展开分开计时，避免一分钟的展开预算被45秒换章期限抵消。
+    let deadline = start + 45000;
     let signature = '',
       stableSince = 0,
       installed = false,
@@ -474,6 +479,7 @@ export function createBrowserIO(tabId) {
       }
       if (Date.now() - stableSince >= 600 && Date.now() - start >= 1200) {
         if (!preparation) {
+          const preparationStarted = Date.now();
           const reply = await chrome.scripting.executeScript({
             target: { tabId },
             args: [
@@ -487,6 +493,8 @@ export function createBrowserIO(tabId) {
             ],
             func: (options) => globalThis.ManualCapture.prepareContent(options),
           });
+          // prepareContent 自身执行60秒总预算及单项等待限制；其耗时不占用换章预算。
+          deadline += Date.now() - preparationStarted;
           preparation = reply[0]?.result;
           if (preparation?.status === 'auth') return preparation;
           if (preparation?.status !== 'ok')

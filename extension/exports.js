@@ -1,4 +1,7 @@
 /** Pure export rendering: sanitized saved pages in, four file strings out. No browser I/O. */
+// buildExports 只转换已有存档，不能补采；archiveFor 筛选归档字段，markdownBody 转换展示。
+// hasMissingExamples 仅识别已知的空样例容器，不是所有内容缺漏的通用检测器。
+// “已采集”“待核对”由章节状态统计，正文稳定性警告单独列出，不能只看计数判断完整性。
 const DEFAULT_ENTRY = '未指定';
 const STATUS_LABELS = {
   pending: '待处理',
